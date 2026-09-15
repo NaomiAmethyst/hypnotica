@@ -400,11 +400,13 @@ const MODES = ["any", "all", "not"];
 const MODE_LABEL = { any: "any", all: "all", not: "not" };
 const emptyFacet = () => ({ any: [], all: [], not: [] });
 
-/* What a tag is *about*, read off its "Kind: Value" prefix. This mirrors KINDS
-   in enrich/vocab.py, which is where tags are given their prefix; the build
-   ingests the YAML as written, so the prefix in the data is all we go on. A
-   prefix that is not listed here is an ordinary content tag, which is what
-   keeps a stray "Hypno: Full" out of the sections. */
+/* What a tag is *about*, read off its "Kind: Value" prefix. The same eight live
+   in build.go here and in Inductor's TagKinds, which is where a tag is given its
+   prefix in the first place; the build ingests the YAML as written, so the
+   prefix in the data is all we go on. A prefix that is not listed here is an
+   ordinary content tag, which is what keeps a stray "Hypno: Full" out of the
+   sections -- and is also why adding a namespace to a registry without adding
+   it here is quiet rather than loud. */
 const TAG_KINDS = [
   { key: "voice", prefix: "Voice", label: "Voice",
     note: "how the speaker presents" },
@@ -422,20 +424,41 @@ const TAG_KINDS = [
     note: "touched on, not the subject" },
   { key: "content", prefix: "", label: "Content", note: "what happens in it" },
 ];
-const KIND_BY_PREFIX = new Map(TAG_KINDS.filter(k => k.prefix).map(k => [k.prefix, k]));
+/* The eight above are the fallback, not the law: a registry may declare its own
+   namespaces and the build ships them in the index head as `tagKinds`. They stay
+   compiled in because the first paint happens before any data arrives, and
+   because a page cached from an older build has no `tagKinds` to read. */
+let KINDS = TAG_KINDS;
+let KIND_BY_PREFIX = new Map();
+let KIND_BY_KEY = new Map();
+let SPOILER_KINDS = new Set();
+let CONTENT_KIND = "content";
+function useKinds(kinds) {
+  KINDS = Array.isArray(kinds) && kinds.length ? kinds : TAG_KINDS;
+  KIND_BY_PREFIX = new Map(KINDS.filter(k => k.prefix).map(k => [k.prefix, k]));
+  KIND_BY_KEY = new Map(KINDS.map(k => [k.key, k]));
+  SPOILER_KINDS = new Set(KINDS.filter(k => k.spoiler).map(k => k.key));
+  CONTENT_KIND = (KINDS.find(k => !k.prefix) || { key: "content" }).key;
+}
+useKinds(TAG_KINDS);
+/* The head and the namespaces it was built with arrive together and must be
+   installed together: sections built from the fallback while tags are named by
+   the data is the one state where a namespace silently loses its section. */
+function setData(d) {
+  DATA = d || { site: {}, authors: [], items: [] };
+  useKinds(DATA.tagKinds);
+}
 /* Recomputed from the file itself, so it is filtered on below and never offered
    as a tag - a "Duration: 10-20" on a 60-second preview is exactly the kind of
    claim that used to get through. Items written before the retag still carry
    these, so they are dropped on the way in rather than waited out. */
 const DERIVED_PREFIXES = new Set(["Duration"]);
 const isDerivedTag = t => DERIVED_PREFIXES.has(String(t).split(": ")[0]);
-const KIND_BY_KEY = new Map(TAG_KINDS.map(k => [k.key, k]));
-const SPOILER_KINDS = new Set(TAG_KINDS.filter(k => k.spoiler).map(k => k.key));
 
 function tagKind(tag) {
   const i = String(tag).indexOf(": ");
-  if (i < 0) return "content";
-  return KIND_BY_PREFIX.get(String(tag).slice(0, i))?.key || "content";
+  if (i < 0) return CONTENT_KIND;
+  return KIND_BY_PREFIX.get(String(tag).slice(0, i))?.key || CONTENT_KIND;
 }
 /* What a tag means, from tags.yaml by way of the build. A chip shows the value
    only - "Sink", not "Trigger: Sink" - so the definition is the one place a
@@ -963,7 +986,7 @@ function tagGroups(tags) {
     if (!by.has(kind)) by.set(kind, []);
     by.get(kind).push(t);
   }
-  return TAG_KINDS.map(k => [k, by.get(k.key) || []]).filter(([, v]) => v.length);
+  return KINDS.map(k => [k, by.get(k.key) || []]).filter(([, v]) => v.length);
 }
 
 /* `label` puts the kind's name before its group -- worth the room on an item
@@ -1226,7 +1249,7 @@ function facetPanel(key, kind, label, field, note) {
 
 function facetBar() {
   const sections = [
-    ...TAG_KINDS.map(k => ["tags", k.key, k.label, !!k.spoiler]),
+    ...KINDS.map(k => ["tags", k.key, k.label, !!k.spoiler]),
     ["cats", null, "Categories", false],
   ];
   return sections.map(([key, kind, label, spoiler]) => {
@@ -1247,7 +1270,7 @@ function facetBar() {
 
 function facetPanels() {
   const out = [];
-  for (const k of TAG_KINDS) {
+  for (const k of KINDS) {
     if (k.spoiler && !F.spoil) continue;
     out.push(facetPanel("tags", k.key, k.label, "tags", k.note));
   }
@@ -1436,7 +1459,7 @@ async function syncCatalog(stored) {
       stored = new Map();
       await Catalog.put("schema", String(schema), schema);
     }
-    DATA = head;
+    setData(head);
     if (headHash) await Catalog.put("index.json", headHash, DATA);
     changed = true;
   }
@@ -2258,14 +2281,14 @@ async function boot() {
   const stored = await Catalog.all();
   const head = stored.get("index.json");
   if (head?.data?.site) {
-    DATA = head.data;
+    setData(head.data);
     for (const [name, row] of stored) {
       if (name.startsWith("index/") && Array.isArray(row.data)) PAGES.set(name, row.data);
     }
     rebuildItems();
   } else {
     try {
-      DATA = await fetchJSON("data/index.json");
+      setData(await fetchJSON("data/index.json"));
       const hash = String(DATA.site?.built || "");
       if (hash) await Catalog.put("index.json", hash, DATA);
     } catch {

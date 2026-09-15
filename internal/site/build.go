@@ -315,7 +315,13 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 	say("→ detail: %d shard(s)", len(details))
 	head["tagTable"] = tagTable
 	head["catTable"] = catTable
-	if glossary := tagGlossary(c.Source, r.Items); len(glossary) > 0 {
+	registry := readRegistry(c.Source)
+	kinds := namespacesOf(registry)
+	head["tagKinds"] = kinds
+	if e := writeFile(filepath.Join(c.Output, "namespaces.css"), []byte(namespaceCSS(kinds))); e != nil {
+		return r, e
+	}
+	if glossary := tagGlossary(registry, r.Items); len(glossary) > 0 {
 		head["tagInfo"] = glossary
 		say("→ tags: %d of the library's %d tags carry a description", len(glossary), len(tagTable))
 	}
@@ -419,37 +425,37 @@ func writeWordIndex(root string, transcripts map[string]string) error {
 	}
 	return nil
 }
-func tagGlossary(root string, items []*Item) object {
-	var registry object
+
+// readRegistry finds the tag registry: by name first, then by what a document
+// says it is, because a tree may keep it anywhere.
+func readRegistry(root string) object {
 	for _, name := range []string{"tags.yaml", "tags.yml"} {
 		path := filepath.Join(root, name)
 		if isFile(path) {
 			docs, e := readDocs(path)
 			if e == nil && len(docs) == 1 {
-				registry = mapping(docs[0])
+				return mapping(docs[0])
 			}
 			break
 		}
 	}
-	if registry == nil {
-		files, _ := yamlFiles(root)
-		for _, path := range files {
-			docs, e := readDocs(path)
-			if e == nil && len(docs) == 1 && about(mapping(docs[0])) == "tags" {
-				registry = mapping(docs[0])
-				break
-			}
+	files, _ := yamlFiles(root)
+	for _, path := range files {
+		docs, e := readDocs(path)
+		if e == nil && len(docs) == 1 && about(mapping(docs[0])) == "tags" {
+			return mapping(docs[0])
 		}
 	}
+	return nil
+}
+
+func tagGlossary(registry object, items []*Item) object {
 	meanings := object{}
-	prefixes := map[string]string{
-		"voice":      "Voice",
-		"audience":   "Audience",
-		"induction":  "Induction",
-		"production": "Production",
-		"trigger":    "Trigger",
-		"compulsion": "Compulsion",
-		"cw":         "CW",
+	prefixes := map[string]string{}
+	for _, k := range namespacesOf(registry) {
+		if k.Prefix != "" {
+			prefixes[k.Key] = k.Prefix
+		}
 	}
 	for kind, value := range registry {
 		for name, value := range mapping(value) {

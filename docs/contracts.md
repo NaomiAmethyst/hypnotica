@@ -111,9 +111,41 @@ content:
   Nature: Outdoor scenes.
 ```
 
-Known prefixes are Voice, Audience, Induction, Production, Trigger, and
-Compulsion; content tags have no prefix. Only used definitions are emitted.
+Known prefixes default to Voice, Audience, Induction, Production, Trigger, CW
+and Compulsion; content tags have no prefix. Only used definitions are emitted.
 A single-document registry elsewhere may be discovered by its kind.
+
+A registry may declare its own namespaces instead, as an ordered list. The order
+is the order sections appear:
+
+```yaml
+kind: Tags
+namespaces:
+  - key: voice
+    prefix: Voice
+    label: Voice
+    note: how the speaker presents
+    colour: '#8a3f86'
+    dark: '#dda3d6'
+  - key: warning
+    prefix: Warning
+    label: Warnings
+    spoiler: true
+  - key: subject          # no prefix: the namespace bare tags fall into
+    label: Subject
+voice:
+  Soft: Softly spoken.
+```
+
+`key` names the registry block and must be present; `label` defaults to the
+capitalised key; `prefix` absent or empty marks the namespace unprefixed tags
+belong to; `spoiler` gates the section behind the spoiler control; `note` is
+shown beside the heading; `colour` and `dark` become that namespace's chip
+colour, defaulting to the muted text colour. A registry declaring no
+`namespaces` keeps the seven prefixes above plus content, unchanged.
+
+A prefix that no namespace claims is not an error: the tag is filed under the
+unprefixed namespace and rendered as an ordinary tag.
 
 ## Transcripts and Inductor
 
@@ -139,8 +171,9 @@ the same YAML and transcript cache without importing the Go implementation.
 | Path | Contents |
 | --- | --- |
 | `index.html`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest` | Web app |
+| `namespaces.css` | One generated custom property per namespace, light and dark |
 | `icons/` | Procedural PWA icons and optional supplied icon |
-| `data/index.json` | Site, authors, interned tag/category tables, page count |
+| `data/index.json` | Site, authors, interned tag/category tables, namespaces, page count |
 | `data/index/<n>.json` | Catalogue pages of 250 items |
 | `data/detail/<author-slug>.json` | Item descriptions and detail fields; optional `_author` entry |
 | `data/search.json` | Flattened search text by item ID |
@@ -154,6 +187,11 @@ the same YAML and transcript cache without importing the Go implementation.
 | `media/video/<author-slug>/<id>.<ext>` | Optional video |
 | `media/author/<author-slug>.<ext>` | Author artwork |
 | `feed/all.xml`, `feed/<author-id>.xml` | Combined and per-author podcast feeds |
+
+The head's `tagKinds` is the namespace list the build resolved, in order, each
+with `key`, `prefix`, `label` and optionally `spoiler` and `note`. The app reads
+it and falls back to the built-in seven-plus-content when it is absent, so a
+cached page from an older build keeps working.
 
 Catalogue tags/categories are integer offsets into the head's tables. Detail
 shards carry descriptions, source URLs, transcript sources, measurements, video

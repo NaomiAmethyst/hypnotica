@@ -120,6 +120,7 @@ func buildFeed(items []*Item, a *Author, c Config, title, description, selfPath,
 	b.WriteString("</channel>\n</rss>\n")
 	return b.String()
 }
+
 // writeFeeds records each feed it writes in `claimed`, so a creator who leaves
 // the library does not leave a feed behind still being served.
 func writeFeeds(items []*Item, authors map[string]*Author, c Config, now time.Time, claimed map[string]bool) error {

@@ -6,6 +6,10 @@ const AUDIO = "hypnotica-audio-v1";   // unversioned: user downloads survive reb
 
 const SHELL_FILES = [
   "./", "./index.html", "./app.js", "./style.css",
+  // Generated from the registry's namespaces, so it is part of the shell rather
+  // than an extra: without it the tag chips lose their colours offline, which
+  // looks like a broken page rather than a missing stylesheet.
+  "./namespaces.css",
   "./manifest.webmanifest", "./data/index.json",
 ];
 

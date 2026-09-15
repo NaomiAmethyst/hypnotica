@@ -1,0 +1,10 @@
+.git
+node_modules
+bin
+dist
+www
+content
+.hypnotica
+**/.hypnotica
+coverage.out
+*.test

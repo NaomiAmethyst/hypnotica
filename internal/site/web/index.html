@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>__TITLE__</title>
+<meta name="description" content="__DESCRIPTION__">
+<meta name="theme-color" content="__THEME__">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="__TITLE__">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css?v=__BUILD_ID__">
+<link rel="icon" href="__ICON__">
+<link rel="apple-touch-icon" href="__ICON__">
+<link rel="alternate" type="application/rss+xml" title="__TITLE__" href="feed/all.xml">
+</head>
+<body>
+<header class="top">
+  <div class="topbar">
+    <a class="brand" href="#/"><span class="dot"></span><span id="brandName">__TITLE__</span></a>
+    <nav class="navlinks">
+      <a href="#/">Library</a>
+      <a href="#/authors">Authors</a>
+      <a href="#/playlists">Playlists</a>
+      <a href="#/queue">Queue</a>
+      <a href="#/offline">Offline</a>
+      <a id="feedAll" href="feed/all.xml">RSS</a>
+    </nav>
+    <span class="netbadge" id="net">online</span>
+  </div>
+</header>
+
+<main id="main" class="wrap"><p class="count">Loading library…</p></main>
+
+<div class="player hidden" id="player">
+  <div class="inner">
+    <img class="art hidden" id="pArt" alt="" id="pOpen">
+    <div class="who" id="pOpen" role="button" tabindex="0">
+      <b id="pTitle"></b><span id="pSub"></span>
+    </div>
+    <div class="ctl">
+      <button id="pPrev" title="Previous (Shift+←)">⏮</button>
+      <button id="pBack" title="Back 15s">−15</button>
+      <button id="pPlay" class="big" title="Play/pause (Space)">▶</button>
+      <button id="pFwd" title="Forward 30s">+30</button>
+      <button id="pNext" title="Next (Shift+→)">⏭</button>
+      <button id="pRate" class="rate" title="Playback speed">1×</button>
+    </div>
+  </div>
+  <div class="bar">
+    <time id="pNow">0:00</time>
+    <input id="pSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
+    <time id="pEnd">0:00</time>
+  </div>
+</div>
+
+<dialog id="plDlg">
+  <div class="dh">Add to playlist</div>
+  <div class="db" id="plDlgBody"></div>
+  <div class="df"><button class="btn" onclick="this.closest('dialog').close()">Close</button></div>
+</dialog>
+
+<script src="app.js?v=__BUILD_ID__"></script>
+</body>
+</html>

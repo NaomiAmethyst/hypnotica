@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>Nyx</title>
+  <link>https://example.com/nyx</link>
+  <atom:link href="http://localhost:9/feed/nyx.xml" rel="self" type="application/rss+xml"/>
+  <language>en</language>
+  <description><![CDATA[The other fixture creator.]]></description>
+  <itunes:author>Nyx</itunes:author>
+  <itunes:owner><itunes:name>Nyx</itunes:name></itunes:owner>
+  <itunes:explicit>true</itunes:explicit>
+  <itunes:type>episodic</itunes:type>
+  <itunes:category text="Arts"/>
+  
+  <lastBuildDate>Tue, 15 Sep 2026 00:50:06 +0000</lastBuildDate>
+  <item>
+    <title>nyx-4</title>
+    <link>http://localhost:9/#/item/nyx-4</link>
+    <guid isPermaLink="false">hypnotica:nyx:nyx-4</guid>
+    <pubDate>Wed, 01 Jan 2025 00:00:00 +0000</pubDate>
+    <description><![CDATA[<p>The fourth fixture recording.</p><p><em>Tags:</em> Audience: F4A, ASMR-ish, Trigger: Snap, Induction: Conversational</p>]]></description>
+    <content:encoded><![CDATA[<p>The fourth fixture recording.</p><p><em>Tags:</em> Audience: F4A, ASMR-ish, Trigger: Snap, Induction: Conversational</p>]]></content:encoded>
+    <itunes:summary><![CDATA[The fourth fixture recording.]]></itunes:summary>
+    <itunes:author>Nyx</itunes:author>
+    <itunes:duration>0:10:00</itunes:duration>
+    <itunes:explicit>true</itunes:explicit>
+    <itunes:subtitle>The fourth fixture recording.</itunes:subtitle>
+    <itunes:keywords>Audience: F4A, ASMR-ish, Trigger: Snap, Induction: Conversational</itunes:keywords>
+    <category>Audio, Roleplay</category>
+    <enclosure url="http://localhost:9/media/audio/nyx/nyx-4.mp3" length="1413" type="audio/mpeg"/>
+  </item>
+</channel>
+</rss>

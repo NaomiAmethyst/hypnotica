@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>Voxa</title>
+  <link>https://example.com/voxa</link>
+  <atom:link href="http://localhost:9/feed/voxa.xml" rel="self" type="application/rss+xml"/>
+  <language>en</language>
+  <description><![CDATA[A fixture creator.]]></description>
+  <itunes:author>Voxa</itunes:author>
+  <itunes:owner><itunes:name>Voxa</itunes:name></itunes:owner>
+  <itunes:explicit>true</itunes:explicit>
+  <itunes:type>episodic</itunes:type>
+  <itunes:category text="Arts"/>
+  
+  <lastBuildDate>Tue, 15 Sep 2026 00:50:06 +0000</lastBuildDate>
+  <item>
+    <title>voxa-1</title>
+    <link>http://localhost:9/#/item/voxa-1</link>
+    <guid isPermaLink="false">hypnotica:voxa:voxa-1</guid>
+    <pubDate>Sat, 04 Jan 2025 00:00:00 +0000</pubDate>
+    <description><![CDATA[<p>The first fixture recording.</p><p><em>Tags:</em> Audience: F4M, Femdom, Induction: Confusion, Production: Subliminals, Trigger: Snap</p>]]></description>
+    <content:encoded><![CDATA[<p>The first fixture recording.</p><p><em>Tags:</em> Audience: F4M, Femdom, Induction: Confusion, Production: Subliminals, Trigger: Snap</p>]]></content:encoded>
+    <itunes:summary><![CDATA[The first fixture recording.]]></itunes:summary>
+    <itunes:author>Voxa</itunes:author>
+    <itunes:duration>0:05:00</itunes:duration>
+    <itunes:explicit>true</itunes:explicit>
+    <itunes:subtitle>The first fixture recording.</itunes:subtitle>
+    <itunes:keywords>Audience: F4M, Femdom, Induction: Confusion, Production: Subliminals, Trigger: Snap</itunes:keywords>
+    <category>Audio, Hypnosis</category>
+    <enclosure url="http://localhost:9/media/audio/voxa/voxa-1.mp3" length="1413" type="audio/mpeg"/>
+  </item>
+  <item>
+    <title>voxa-2</title>
+    <link>http://localhost:9/#/item/voxa-2</link>
+    <guid isPermaLink="false">hypnotica:voxa:voxa-2</guid>
+    <pubDate>Fri, 03 Jan 2025 00:00:00 +0000</pubDate>
+    <description><![CDATA[<p>The second fixture recording.</p><p><em>Tags:</em> Audience: F4A, Femdom, Compulsion: Relisten</p>]]></description>
+    <content:encoded><![CDATA[<p>The second fixture recording.</p><p><em>Tags:</em> Audience: F4A, Femdom, Compulsion: Relisten</p>]]></content:encoded>
+    <itunes:summary><![CDATA[The second fixture recording.]]></itunes:summary>
+    <itunes:author>Voxa</itunes:author>
+    <itunes:duration>0:25:00</itunes:duration>
+    <itunes:explicit>true</itunes:explicit>
+    <itunes:subtitle>The second fixture recording.</itunes:subtitle>
+    <itunes:keywords>Audience: F4A, Femdom, Compulsion: Relisten</itunes:keywords>
+    <category>Audio</category>
+    <enclosure url="http://localhost:9/media/audio/voxa/voxa-2.mp3" length="1413" type="audio/mpeg"/>
+  </item>
+  <item>
+    <title>voxa-3</title>
+    <link>http://localhost:9/#/item/voxa-3</link>
+    <guid isPermaLink="false">hypnotica:voxa:voxa-3</guid>
+    <pubDate>Thu, 02 Jan 2025 00:00:00 +0000</pubDate>
+    <description><![CDATA[<p>The third fixture recording.</p><p><em>Tags:</em> Audience: F4M, ASMR-ish, Production: Whispers</p>]]></description>
+    <content:encoded><![CDATA[<p>The third fixture recording.</p><p><em>Tags:</em> Audience: F4M, ASMR-ish, Production: Whispers</p>]]></content:encoded>
+    <itunes:summary><![CDATA[The third fixture recording.]]></itunes:summary>
+    <itunes:author>Voxa</itunes:author>
+    <itunes:duration>0:45:00</itunes:duration>
+    <itunes:explicit>true</itunes:explicit>
+    <itunes:subtitle>The third fixture recording.</itunes:subtitle>
+    <itunes:keywords>Audience: F4M, ASMR-ish, Production: Whispers</itunes:keywords>
+    <category>Free Files</category>
+    <enclosure url="http://localhost:9/media/audio/voxa/voxa-3.mp3" length="1413" type="audio/mpeg"/>
+  </item>
+</channel>
+</rss>

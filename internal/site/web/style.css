@@ -1,0 +1,413 @@
+:root{
+  --bg:#faf7f8; --fg:#1b1418; --mut:#6b5c63; --line:#e6dde1; --card:#fff;
+  --accent:#6633cc; --accent-fg:#fff; --shadow:0 1px 3px rgba(0,0,0,.07);
+  --bar:#fff; --radius:12px; --maxw:1180px;
+  /* One hue per tag namespace. Content is the biggest group by far and stays
+     the muted default: colouring everything is a rainbow, colouring the four
+     structural kinds makes them read as kinds. */
+  --k-voice:#8a3f86; --k-audience:#1f6f85; --k-induction:#35619f;
+  --k-production:#4f7042; --k-trigger:#9c6612; --k-compulsion:#8f4520;
+  --k-cw:#a8323f; --k-content:#6b5c63;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#151013; --fg:#f0e8ec; --mut:#a2919a; --line:#2e2429; --card:#1e171b;
+  --accent:#a98aff; --accent-fg:#1b1418; --shadow:0 1px 3px rgba(0,0,0,.4); --bar:#1a1418;
+  --k-voice:#dda3d6; --k-audience:#6cc2d6; --k-induction:#8fb3e8;
+  --k-production:#a6c890; --k-trigger:#e2b459; --k-compulsion:#e2946e;
+  --k-cw:#f28c8c; --k-content:#a2919a;
+}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+body.has-player{padding-bottom:calc(150px + env(safe-area-inset-bottom))}
+a{color:var(--accent)}
+button{font:inherit;cursor:pointer}
+img{max-width:100%}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 16px 40px}
+.hidden{display:none !important}
+
+/* ---------- header ---------- */
+header.top{position:sticky;top:0;z-index:30;background:var(--bg);
+  border-bottom:1px solid var(--line)}
+.topbar{max-width:var(--maxw);margin:0 auto;padding:10px 16px;
+  display:flex;align-items:center;gap:12px}
+.brand{font-weight:700;font-size:1.15rem;text-decoration:none;color:var(--fg);
+  display:flex;align-items:center;gap:8px;white-space:nowrap}
+.brand .dot{width:12px;height:12px;border-radius:50%;
+  background:radial-gradient(circle at 30% 30%,var(--accent),transparent 70%),var(--accent)}
+.navlinks{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.navlinks a{padding:6px 11px;border-radius:999px;text-decoration:none;color:var(--mut);
+  font-size:.9rem}
+.navlinks a.active,.navlinks a:hover{background:var(--card);color:var(--fg)}
+.netbadge{font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);
+  color:var(--mut)}
+.netbadge.off{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- controls ---------- */
+.controls{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 4px;align-items:center}
+input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--line);
+  border-radius:9px;background:var(--card);color:var(--fg);min-width:0}
+input#q{flex:1 1 240px}
+select{max-width:220px}
+label.chk{display:flex;align-items:center;gap:6px;color:var(--mut);font-size:.85rem;
+  white-space:nowrap}
+.btn{padding:9px 14px;border:1px solid var(--line);border-radius:9px;background:var(--card);
+  color:var(--fg)}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btn.sm{padding:5px 10px;font-size:.82rem;border-radius:8px}
+.btn[disabled]{opacity:.5;cursor:default}
+.count{color:var(--mut);font-size:.86rem;margin:10px 0 0}
+
+/* ---------- tag / category facets ---------- */
+.facets{display:flex;flex-direction:column;gap:8px;margin:10px 0 2px}
+.fsel{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.durfilter{display:flex;align-items:center;gap:5px;color:var(--mut);font-size:.85rem;
+  white-space:nowrap}
+.durfilter input{width:72px;padding:7px 8px}
+details.facet{border:1px solid var(--line);border-radius:10px;background:var(--card)}
+details.facet>summary{display:flex;align-items:center;gap:8px;cursor:pointer;
+  padding:9px 12px;font-size:.88rem;list-style:none}
+details.facet>summary::-webkit-details-marker{display:none}
+details.facet>summary::before{content:"▸";color:var(--mut);font-size:.85em}
+details.facet[open]>summary::before{content:"▾"}
+details.facet>summary .cnt{background:var(--accent);color:var(--accent-fg);font-weight:700;
+  font-size:.68rem;padding:1px 8px;border-radius:999px}
+details.facet>summary .note{margin-left:auto}
+.fbody{padding:0 12px 12px;border-top:1px solid var(--line);
+  max-height:min(48vh,440px);overflow:auto;overscroll-behavior:contain}
+.fbody .fq{width:100%;margin:11px 0 7px}
+.fbody .note{margin:.2em 0 .6em}
+.fgroup h4{margin:13px 0 5px;font-size:.7rem;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--mut)}
+button.tag{font-family:inherit;line-height:inherit}
+.tag i{font-style:normal;opacity:.6;margin-left:5px;font-variant-numeric:tabular-nums}
+.tag.f-none{opacity:.45}
+.tag.f-any{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tag.f-all{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);
+  font-weight:600}
+.tag.f-all i{opacity:.75}
+.tag.f-not{border-style:dashed;border-color:var(--mut);color:var(--mut);
+  text-decoration:line-through}
+b.f-any{color:var(--accent)}
+b.f-all{background:var(--accent);color:var(--accent-fg);border-radius:4px;padding:0 5px}
+b.f-not{color:var(--mut);text-decoration:line-through}
+
+/* ---------- grid ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px;
+  margin-top:16px}
+/* A chunk is a bookkeeping wrapper, not a cell: its cards lay out in the grid
+   itself. When it is unloaded it becomes a full-width spacer holding the height
+   its cards had, so the scrollbar does not move. */
+.grid > .chunk{display:contents}
+.grid > .chunk[data-spacer]{display:block;grid-column:1/-1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+.card .thumb{position:relative;display:block;background:var(--line);aspect-ratio:16/9}
+.card .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.card .play{position:absolute;inset:auto 8px 8px auto;width:38px;height:38px;border-radius:50%;
+  border:none;background:rgba(0,0,0,.62);color:#fff;font-size:15px;display:grid;
+  place-items:center;opacity:0;transition:opacity .15s}
+.card:hover .play,.card:focus-within .play{opacity:1}
+.card .body{padding:11px 13px 13px;display:flex;flex-direction:column;gap:6px;flex:1}
+.card h3{font-size:.97rem;margin:0;line-height:1.35}
+.card h3 a{text-decoration:none;color:var(--fg)}
+.card h3 a:hover{color:var(--accent)}
+.meta{color:var(--mut);font-size:.77rem;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.meta .who{color:var(--accent);text-decoration:none}
+.tags{display:flex;flex-wrap:wrap;gap:4px}
+.tag{font-size:.7rem;border-radius:999px;--k:var(--k-content);
+  background:color-mix(in srgb,var(--k) 9%,var(--bg));
+  border:1px solid color-mix(in srgb,var(--k) 30%,var(--line));
+  padding:1px 8px;color:var(--k);text-decoration:none;white-space:nowrap;cursor:pointer}
+.tag.k-voice{--k:var(--k-voice)}
+.tag.k-audience{--k:var(--k-audience)}
+.tag.k-induction{--k:var(--k-induction)}
+.tag.k-production{--k:var(--k-production)}
+.tag.k-trigger{--k:var(--k-trigger)}
+.tag.k-compulsion{--k:var(--k-compulsion)}
+.tag.k-cw{--k:var(--k-cw)}
+.tag.k-content{--k:var(--k-content)}
+
+/* A group is one namespace. The gap between groups is wider than the gap
+   inside one, which is the whole of the grouping on a card. */
+.tags{gap:4px 10px}
+.tgrp{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+.tags.labelled{gap:8px 16px;align-items:baseline}
+.tags.labelled .tgrp{gap:5px}
+.tgl{font-size:.62rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--mut);margin-right:2px;white-space:nowrap}
+.tag:hover{border-color:var(--accent);color:var(--accent)}
+.cardacts{display:flex;gap:6px;margin-top:auto;padding-top:4px}
+.pill{font-size:.68rem;padding:1px 7px;border-radius:999px;border:1px solid var(--line);
+  color:var(--mut)}
+.pill.ok{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- item page ---------- */
+article{max-width:820px;margin:0 auto}
+.back{display:inline-block;margin:14px 0;text-decoration:none;color:var(--mut)}
+article h1{font-size:1.7rem;margin:.1em 0 .3em;line-height:1.25}
+.hero{width:100%;border-radius:var(--radius);margin:14px 0}
+/* A recording that happens to have pictures. Sized to the page, capped so a
+   portrait clip does not push the write-up off the bottom of the screen. */
+video.hero{display:block;background:#000;max-height:min(70vh,620px);
+  aspect-ratio:auto;object-fit:contain}
+video.hero + .note{margin:-6px 0 14px;max-width:68ch}
+.kv{color:var(--mut);font-size:.88rem;margin:.25em 0}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
+.prose{overflow-wrap:anywhere}
+.prose img{border-radius:10px;height:auto}
+.prose h2,.prose h3{margin-top:1.4em}
+.prose pre{white-space:pre-wrap;font:inherit}
+details.tr{border:1px solid var(--line);border-radius:var(--radius);padding:12px 15px;
+  margin:22px 0;background:var(--card)}
+details.tr summary{cursor:pointer;font-weight:600}
+
+/* spoiler box: undisclosed triggers found by the transcript audit */
+details.sp{border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:var(--radius);padding:12px 15px;margin:22px 0;background:var(--card)}
+details.sp summary{cursor:pointer;font-weight:600;
+  display:flex;align-items:center;gap:8px}
+details.sp summary .cnt{font-weight:600;font-size:.78rem;line-height:1;
+  padding:3px 8px;border-radius:999px;background:var(--line);color:var(--mut);
+  white-space:nowrap}
+details.sp summary .cnt.warn{background:var(--accent);color:var(--accent-fg)}
+.sprow{border-top:1px solid var(--line);padding:12px 0 2px}
+.sprow:first-of-type{border-top:0}
+.sprow p{margin:.35em 0}
+.sphead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.sphead .t{color:var(--mut);font-size:.85rem;font-variant-numeric:tabular-nums;
+  cursor:pointer;text-decoration:underline dotted}
+.sev{font-size:.7rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  padding:2px 7px;border-radius:999px;border:1px solid currentColor}
+.sev.high{color:var(--accent)}
+.sev.medium{color:#b3741b}
+.sev.low{color:var(--mut)}
+.sev.declared{color:var(--mut)}
+.sprow.dec{opacity:.78}
+.sprow.dec .sphead b{font-weight:600}
+@media(prefers-color-scheme:dark){.sev.medium{color:#e0a44b}}
+.sprow blockquote{margin:.5em 0;padding-left:11px;border-left:2px solid var(--line);
+  color:var(--fg);font-style:italic;overflow-wrap:anywhere}
+.sprow blockquote cite{display:block;margin-top:.35em;font-style:normal;
+  font-size:.8rem;color:var(--mut)}
+.sphead .t.off{cursor:default;text-decoration:none}
+.note{color:var(--mut);font-size:.82rem}
+table.seg{width:100%;border-collapse:collapse;font-size:.92rem;margin-top:12px}
+table.seg td{vertical-align:top;padding:3px 10px 3px 0}
+table.seg td.t{color:var(--mut);white-space:nowrap;font-variant-numeric:tabular-nums;
+  cursor:pointer;text-decoration:underline dotted}
+table.seg tr.on td{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+mark{background:color-mix(in srgb,var(--accent) 35%,transparent);color:inherit;
+  border-radius:3px;padding:0 2px}
+
+/* ---------- author strip ---------- */
+.authors{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 0}
+.who-card{display:flex;gap:11px;align-items:center;background:var(--card);
+  border:1px solid var(--line);border-radius:999px;padding:6px 15px 6px 6px;
+  text-decoration:none;color:var(--fg)}
+.who-card:hover{border-color:var(--accent)}
+.who-card img,.who-card .ph{width:38px;height:38px;border-radius:50%;object-fit:cover;
+  background:var(--line);flex:none}
+.who-card b{display:block;font-size:.92rem}
+.who-card span{color:var(--mut);font-size:.76rem}
+.authorhead{display:flex;gap:18px;align-items:center;margin:18px 0;flex-wrap:wrap}
+.authorhead img,.authorhead .ph{width:96px;height:96px;border-radius:50%;object-fit:cover;
+  background:var(--line)}
+
+/* ---------- player ---------- */
+.player{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--bar);
+  border-top:1px solid var(--line);padding:8px 12px calc(8px + env(safe-area-inset-bottom));
+  box-shadow:0 -2px 14px rgba(0,0,0,.09)}
+.player .inner{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;gap:12px}
+.player img.art{width:46px;height:46px;border-radius:8px;object-fit:cover;background:var(--line);
+  flex:none}
+.player .who{min-width:0;flex:1}
+.player .who b{display:block;font-size:.9rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.player .who span{color:var(--mut);font-size:.76rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;display:block}
+.player .ctl{display:flex;align-items:center;gap:4px}
+.player .ctl button{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+  background:var(--card);color:var(--fg);display:grid;place-items:center;font-size:14px}
+.player .ctl button.big{width:46px;height:46px;background:var(--accent);color:var(--accent-fg);
+  border-color:var(--accent);font-size:17px}
+.player .bar{display:flex;align-items:center;gap:9px;max-width:var(--maxw);margin:6px auto 0}
+.player .bar input[type=range]{flex:1;padding:0;accent-color:var(--accent);background:none;
+  border:none;min-width:0}
+.player time{color:var(--mut);font-size:.74rem;font-variant-numeric:tabular-nums}
+.player .rate{border:1px solid var(--line);border-radius:8px;background:var(--card);
+  color:var(--mut);font-size:.76rem;padding:3px 7px}
+@media(max-width:640px){
+  .player .who span{display:none}
+  .player .ctl button:not(.big){width:34px;height:34px}
+}
+
+/* ---------- queue / playlist ---------- */
+ol.list{list-style:none;margin:14px 0;padding:0;display:flex;flex-direction:column;gap:6px}
+ol.list li{display:flex;align-items:center;gap:10px;background:var(--card);
+  border:1px solid var(--line);border-radius:10px;padding:8px 11px}
+ol.list li.on{border-color:var(--accent)}
+ol.list li .n{color:var(--mut);font-size:.78rem;width:1.6em;text-align:right;flex:none}
+ol.list li .t{flex:1;min-width:0}
+ol.list li .t b{display:block;font-size:.92rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-weight:600}
+ol.list li .t span{color:var(--mut);font-size:.75rem}
+ol.list li .g{display:flex;gap:4px;flex:none}
+ol.list li .g button{border:1px solid var(--line);background:var(--bg);color:var(--mut);
+  border-radius:7px;width:28px;height:28px;display:grid;place-items:center;font-size:12px}
+ol.list li .g button:hover{border-color:var(--accent);color:var(--accent)}
+.empty{color:var(--mut);text-align:center;padding:48px 20px;border:1px dashed var(--line);
+  border-radius:var(--radius);margin-top:18px}
+.progress{height:4px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:5px}
+.progress i{display:block;height:100%;background:var(--accent);transition:width .2s}
+
+/* ---------- modal ---------- */
+dialog{border:1px solid var(--line);border-radius:var(--radius);background:var(--card);
+  color:var(--fg);padding:0;max-width:min(440px,92vw);box-shadow:0 10px 40px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog .dh{padding:15px 18px 0;font-weight:600}
+dialog .db{padding:14px 18px}
+dialog .df{padding:0 18px 16px;display:flex;gap:8px;justify-content:flex-end}
+dialog ol.list{max-height:46vh;overflow:auto;margin:0}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(160px + env(safe-area-inset-bottom));z-index:60;background:var(--fg);
+  color:var(--bg);padding:9px 16px;border-radius:999px;font-size:.87rem;
+  opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw}
+.toast.show{opacity:.95}
+
+/* audit annotations added to descriptions */
+.audit-note{border:1px solid var(--accent);border-radius:var(--radius);padding:12px 16px;
+  margin:20px 0;background:color-mix(in srgb,var(--accent) 7%,var(--card))}
+.audit-note p{margin:.4em 0}
+.audit-note ul{margin:.5em 0 .4em;padding-left:1.2em}
+.audit-note li{margin:.35em 0}
+.audit-note em{color:var(--mut);font-size:.84em}
+.audit-fineprint{color:var(--mut);font-size:.82em}
+
+/* ---------- facet bands ---------- */
+.facet .frow{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.facet .frow .fq{flex:1;margin:0}
+.facet .band{margin:10px 0 4px}
+.facet .band h4{margin:0 0 5px;font-size:11px;font-weight:600;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--muted);display:flex;gap:6px;align-items:baseline}
+.facet .band h4 i{font-style:normal;font-weight:400;opacity:.7}
+.facet .band + .band{border-top:1px solid var(--line);padding-top:8px}
+
+/* Written from the recordings, so it reads as the library talking, not the
+   creator: set apart from their own words below it. */
+.synopsis{margin:14px 0 6px;font-size:15px;line-height:1.55;color:var(--fg);
+  border-left:3px solid var(--accent);padding-left:12px;max-width:68ch}
+
+/* A synopsis is a paragraph, not a caption: give it room on the card, but cap
+   it so one wordy creator cannot make every row as tall as their entry. */
+.card .blurb{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;
+  overflow:hidden;line-height:1.45}
+/* The chips go under the blurb and stay at the bottom of the card, so a row of
+   creators lines up however long their introductions run. */
+.card .blurb + .tags{margin-top:auto;padding-top:8px}
+
+/* What recurs across a creator's work, on their own page. Set apart from the
+   synopsis above it the same way the tags on an item are. */
+.authortags{margin:14px 0 4px}
+
+/* ---- what was written rather than found -------------------------------- */
+/* A library like this is a mixture: the creator's own title above a summary a
+   model wrote from the transcript, beside a cover that never existed until a
+   renderer made one. They read alike on the page and they are not alike, so
+   each generated line says so on the line itself rather than in a footnote
+   nobody reaches. Quiet by design -- it is a qualifier, not a warning. */
+.gen{display:inline-block;vertical-align:baseline;line-height:1;
+  font-size:.72em;color:var(--mut);opacity:.65;cursor:help;
+  text-decoration:none;user-select:none}
+.gen:hover{opacity:1;color:var(--accent)}
+h1 .gen,h3 .gen{font-size:.45em}
+.prose .gen,.synopsis .gen{margin-left:4px}
+.herowrap{position:relative;display:inline-block;max-width:100%}
+/* Over a picture there is no telling what is behind it, so the glyph gets a
+   disc of its own rather than a guess at the contrast. */
+.herowrap .gen{position:absolute;right:9px;bottom:9px;font-size:.85rem;opacity:.9;
+  width:22px;height:22px;display:grid;place-items:center;border-radius:50%;
+  color:var(--fg);background:color-mix(in srgb,var(--card) 82%,transparent);
+  backdrop-filter:blur(3px)}
+/* The creator's portrait is a 96px circle; a pill laid over it would cover a
+   tenth of the picture. Stack it underneath instead, where it still reads as
+   belonging to the image. */
+.authorhead .herowrap{display:flex;flex-direction:column;align-items:center;
+  gap:7px;flex:0 0 auto}
+.authorhead .herowrap .gen{position:static;backdrop-filter:none;background:none;
+  width:auto;height:auto;display:inline-block;opacity:.65}
+
+/* The brief a picture was drawn from, and the rest of what was made. Closed:
+   it answers a question somebody only has once they have started wondering. */
+details.prov{border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px 15px;margin:22px 0;background:var(--card)}
+details.prov summary{cursor:pointer;font-weight:600}
+details.prov .genlist{margin:10px 0 0;padding-left:18px;font-size:.88rem;
+  color:var(--mut);line-height:1.5}
+details.prov .genlist b{color:var(--fg);font-weight:600}
+details.prov .brief{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+details.prov .brief .kv{margin:12px 0 4px;font-weight:600;font-size:.82rem;
+  letter-spacing:.03em;text-transform:uppercase;color:var(--mut)}
+pre.prompt{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;
+  font:inherit;font-size:.88rem;line-height:1.5;color:var(--fg);
+  border-left:2px solid var(--line);padding-left:11px}
+
+/* Which of several recordings sharing a title this one is. Quiet, and directly
+   under the name, because it is a qualifier on the title rather than a fact of
+   its own. */
+.variant{font-size:.78rem;color:var(--mut);line-height:1.35;margin:-2px 0 2px}
+.card .variant{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden}
+.variant.big{font-size:.95rem;margin:-6px 0 10px;max-width:68ch}
+
+/* ---- what the audio measures ------------------------------------------- */
+/* Figures with a reading beside them. A number on its own is trivia; the same
+   number with a name and a reading is what somebody opened the panel for. */
+.measured{margin:10px 0 4px}
+.bands{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:8px 18px}
+.band{display:flex;align-items:baseline;gap:8px;border-top:1px solid var(--line);
+  padding-top:7px;font-size:.9rem}
+.band b{font-weight:600;min-width:6.5em;color:var(--mut);font-size:.8rem;
+  letter-spacing:.02em;text-transform:uppercase}
+.band .fig{font-variant-numeric:tabular-nums;font-weight:600;cursor:help;
+  text-decoration:underline dotted;text-underline-offset:3px}
+.band i{font-style:normal;color:var(--mut);font-size:.85rem}
+.measured .disputed{border-left:3px solid var(--accent);padding-left:11px;
+  margin-top:12px}
+
+/* The other cuts of a recording, and the rest of its series. Both are lists of
+   siblings rather than cards: the reader is already looking at one of them, so
+   what matters is what tells them apart -- the variant, the number, the length
+   -- not another row of artwork. */
+.cuts, .series { margin: 22px 0 }
+.cuts h2, .series h2 { font-size: 1rem; margin: 0 0 8px }
+.cutlist, .serieslist { list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden }
+.serieslist { counter-reset: none }
+.cutlist li, .serieslist li { display: flex; gap: 10px; align-items: baseline;
+  padding: 7px 12px; border-top: 1px solid var(--line) }
+.cutlist li:first-child, .serieslist li:first-child { border-top: 0 }
+.cutlist li.here, .serieslist li.here { background: var(--hi, rgba(127,127,127,.10)) }
+.cutlist .meta, .serieslist .meta { font-size: .78rem; color: var(--mut);
+  margin-left: auto; white-space: nowrap }
+.serieslist .num { font-variant-numeric: tabular-nums; color: var(--mut);
+  min-width: 2.2ch; text-align: right }
+.cutlist li > span:first-of-type, .serieslist li > span:first-of-type { font-weight: 600 }
+@media (max-width: 480px) {
+  .cutlist li, .serieslist li { flex-wrap: wrap }
+  .cutlist .meta, .serieslist .meta { margin-left: 0 }
+}
+
+.similar { margin: 22px 0 }
+.similar h2 { font-size: 1rem; margin: 0 0 6px }
+.similar .note { margin: 0 0 8px }
+.simlist { list-style: none; margin: 0 0 14px; padding: 0; display: flex;
+  flex-wrap: wrap; gap: 6px }
+.simlist li { display: flex; gap: 7px; align-items: baseline; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: 999px }
+.simlist .meta { font-size: .74rem; color: var(--mut); font-variant-numeric: tabular-nums }

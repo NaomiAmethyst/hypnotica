@@ -1,0 +1,9 @@
+/bin/
+/dist/
+/www/
+/content/
+node_modules/
+.hypnotica/
+coverage.out
+*.test
+.DS_Store

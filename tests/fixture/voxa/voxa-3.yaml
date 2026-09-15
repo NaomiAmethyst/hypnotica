@@ -1,0 +1,16 @@
+apiVersion: hypnotica/v1
+kind: Item
+id: voxa-3
+title: voxa-3
+author: voxa
+audio: ../media/voxa-3.mp3
+date: 2025-01-02
+duration: 2700
+summary: The third fixture recording.
+description: <p>The third fixture recording.</p>
+categories:
+- Free Files
+tags:
+- 'Audience: F4M'
+- ASMR-ish
+- 'Production: Whispers'

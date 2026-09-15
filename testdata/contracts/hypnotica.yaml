@@ -1,0 +1,8 @@
+site:
+  title: Hypnotica
+  tagline: A library of spoken-audio files.
+  base_url: http://localhost:9
+
+paths:
+  assets: assets
+  cache: .hypnotica

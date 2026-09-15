@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>Extra Author</title>
+  <link>https://example.com/extra</link>
+  <atom:link href="http://localhost:9/feed/extra.xml" rel="self" type="application/rss+xml"/>
+  <language>fr</language>
+  <description><![CDATA[<p>Writing <em>here</em></p>]]></description>
+  <itunes:author>Extra Author</itunes:author>
+  <itunes:owner><itunes:name>Extra Author</itunes:name></itunes:owner>
+  <itunes:explicit>false</itunes:explicit>
+  <itunes:type>episodic</itunes:type>
+  <itunes:category text="Arts"/>
+  <itunes:image href="http://localhost:9/media/author/extra.svg"/>
+  <lastBuildDate>Tue, 15 Sep 2026 00:50:06 +0000</lastBuildDate>
+  <item>
+    <title>Café — Morning</title>
+    <link>http://localhost:9/#/item/cafe-morning--long-cut</link>
+    <guid isPermaLink="false">hypnotica:extra:cafe-morning--long-cut</guid>
+    <pubDate>Thu, 05 Mar 2026 12:30:00 +0200</pubDate>
+    <description><![CDATA[<p>A long walk with <strong>words</strong> and <a href="https://example.com/?a=1&amp;b=2" rel="noreferrer nofollow" target="_blank">a link</a>.</p><hr/><p><strong>Transcript</strong> &mdash; Transcript as supplied with the source</p><pre>Welcome to the morning. Quiet trees and soft footsteps.</pre><p><em>Tags:</em> Nature, Voice: Soft</p>]]></description>
+    <content:encoded><![CDATA[<p>A long walk with <strong>words</strong> and <a href="https://example.com/?a=1&amp;b=2" rel="noreferrer nofollow" target="_blank">a link</a>.</p><hr/><p><strong>Transcript</strong> &mdash; Transcript as supplied with the source</p><pre>Welcome to the morning. Quiet trees and soft footsteps.</pre><p><em>Tags:</em> Nature, Voice: Soft</p>]]></content:encoded>
+    <itunes:summary><![CDATA[Morning summary]]></itunes:summary>
+    <itunes:author>Extra Author</itunes:author>
+    <itunes:duration>1:02:03</itunes:duration>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:subtitle>Morning summary</itunes:subtitle>
+    <itunes:keywords>Nature, Voice: Soft</itunes:keywords>
+    <itunes:image href="http://localhost:9/media/cover/extra/cafe-morning--long-cut.svg"/>
+    <itunes:episode>2</itunes:episode>
+    <category>Audio, Free</category>
+    <podcast:transcript url="http://localhost:9/transcripts/cafe-morning--long-cut.txt" type="text/plain"/>
+    <enclosure url="http://localhost:9/media/audio/extra/cafe-morning--long-cut.mp3" length="1413" type="audio/mpeg"/>
+  </item>
+  <item>
+    <title>Document transcript</title>
+    <link>http://localhost:9/#/item/transcript-doc</link>
+    <guid isPermaLink="false">hypnotica:extra:transcript-doc</guid>
+    <pubDate>Wed, 05 Mar 2025 00:00:00 +0000</pubDate>
+    <description><![CDATA[<p></p><hr/><p><strong>Transcript</strong> &mdash; Automatic transcript (test-model)</p><pre>Document supplied words</pre>]]></description>
+    <content:encoded><![CDATA[<p></p><hr/><p><strong>Transcript</strong> &mdash; Automatic transcript (test-model)</p><pre>Document supplied words</pre>]]></content:encoded>
+    <itunes:summary><![CDATA[]]></itunes:summary>
+    <itunes:author>Extra Author</itunes:author>
+    <itunes:duration>0:00:22</itunes:duration>
+    <itunes:explicit>true</itunes:explicit>
+    <podcast:transcript url="http://localhost:9/transcripts/transcript-doc.txt" type="text/plain"/>
+    <enclosure url="http://localhost:9/media/audio/extra/transcript-doc.mp3" length="1413" type="audio/mpeg"/>
+  </item>
+</channel>
+</rss>

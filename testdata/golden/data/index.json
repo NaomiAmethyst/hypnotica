@@ -1,0 +1,81 @@
+{
+  "site": {
+    "title": "Hypnotica",
+    "tagline": "A library of spoken-audio files.",
+    "description": "",
+    "baseUrl": "http://localhost:9"
+  },
+  "authors": [
+    {
+      "id": "extra",
+      "name": "Extra Author",
+      "url": "https://example.com/extra",
+      "image": "media/author/extra.svg",
+      "summary": "Summary",
+      "description": "<p>Writing <em>here</em></p>",
+      "synopsis": "A synopsis",
+      "generated": [
+        "synopsis",
+        "image"
+      ],
+      "links": {
+        "website": "https://example.com"
+      },
+      "feed": "feed/extra.xml"
+    },
+    {
+      "id": "nyx",
+      "name": "Nyx",
+      "url": "https://example.com/nyx",
+      "image": null,
+      "summary": "The other fixture creator.",
+      "description": "The other fixture creator.",
+      "synopsis": "",
+      "generated": [],
+      "links": {},
+      "feed": "feed/nyx.xml"
+    },
+    {
+      "id": "voxa",
+      "name": "Voxa",
+      "url": "https://example.com/voxa",
+      "image": null,
+      "summary": "A fixture creator.",
+      "description": "A fixture creator.",
+      "synopsis": "",
+      "generated": [],
+      "links": {},
+      "feed": "feed/voxa.xml"
+    }
+  ],
+  "tagTable": [
+    "Nature",
+    "Voice: Soft",
+    "Audience: F4M",
+    "Femdom",
+    "Induction: Confusion",
+    "Production: Subliminals",
+    "Trigger: Snap",
+    "Audience: F4A",
+    "Compulsion: Relisten",
+    "ASMR-ish",
+    "Production: Whispers",
+    "Induction: Conversational",
+    "one",
+    "two"
+  ],
+  "catTable": [
+    "Audio",
+    "Free",
+    "Hypnosis",
+    "Free Files",
+    "Roleplay"
+  ],
+  "tagInfo": {
+    "Nature": "Outdoor scenes",
+    "Voice: Soft": "Softly spoken"
+  },
+  "pages": 1,
+  "total": 7,
+  "pageSize": 250
+}

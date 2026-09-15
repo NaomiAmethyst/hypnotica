@@ -1,0 +1,6 @@
+apiVersion: hypnotica/v1
+kind: Author
+id: nyx
+name: Nyx
+url: https://example.com/nyx
+description: The other fixture creator.

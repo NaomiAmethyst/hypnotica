@@ -1,0 +1,175 @@
+[
+  {
+    "id": "cafe-morning--long-cut",
+    "title": "Café — Morning",
+    "author": "extra",
+    "date": "2026-03-05",
+    "duration": 3724,
+    "tags": [
+      0,
+      1
+    ],
+    "categories": [
+      0,
+      1
+    ],
+    "series": "Walks",
+    "seriesIndex": 2,
+    "cover": "media/cover/extra/cafe-morning--long-cut.svg",
+    "audio": "media/audio/extra/cafe-morning--long-cut.mp3",
+    "bytes": 1413,
+    "summary": "Morning summary",
+    "variant": "Long cut",
+    "hasTranscript": true,
+    "hasVideo": true,
+    "titleGenerated": true,
+    "spoilerCount": 2,
+    "spoilerUnlisted": 1
+  },
+  {
+    "id": "transcript-doc",
+    "title": "Document transcript",
+    "author": "extra",
+    "date": "2025-03-05",
+    "duration": 22,
+    "tags": [],
+    "categories": [],
+    "series": null,
+    "seriesIndex": null,
+    "cover": null,
+    "audio": "media/audio/extra/transcript-doc.mp3",
+    "bytes": 1413,
+    "summary": "",
+    "variant": null,
+    "hasTranscript": true,
+    "spoilerCount": 0,
+    "spoilerUnlisted": 0
+  },
+  {
+    "id": "voxa-1",
+    "title": "voxa-1",
+    "author": "voxa",
+    "date": "2025-01-04",
+    "duration": 300,
+    "tags": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "categories": [
+      0,
+      2
+    ],
+    "series": null,
+    "seriesIndex": null,
+    "cover": null,
+    "audio": "media/audio/voxa/voxa-1.mp3",
+    "bytes": 1413,
+    "summary": "The first fixture recording.",
+    "variant": null,
+    "hasTranscript": false,
+    "spoilerCount": 0,
+    "spoilerUnlisted": 0
+  },
+  {
+    "id": "voxa-2",
+    "title": "voxa-2",
+    "author": "voxa",
+    "date": "2025-01-03",
+    "duration": 1500,
+    "tags": [
+      7,
+      3,
+      8
+    ],
+    "categories": [
+      0
+    ],
+    "series": null,
+    "seriesIndex": null,
+    "cover": null,
+    "audio": "media/audio/voxa/voxa-2.mp3",
+    "bytes": 1413,
+    "summary": "The second fixture recording.",
+    "variant": null,
+    "hasTranscript": false,
+    "spoilerCount": 0,
+    "spoilerUnlisted": 0
+  },
+  {
+    "id": "voxa-3",
+    "title": "voxa-3",
+    "author": "voxa",
+    "date": "2025-01-02",
+    "duration": 2700,
+    "tags": [
+      2,
+      9,
+      10
+    ],
+    "categories": [
+      3
+    ],
+    "series": null,
+    "seriesIndex": null,
+    "cover": null,
+    "audio": "media/audio/voxa/voxa-3.mp3",
+    "bytes": 1413,
+    "summary": "The third fixture recording.",
+    "variant": null,
+    "hasTranscript": false,
+    "spoilerCount": 0,
+    "spoilerUnlisted": 0
+  },
+  {
+    "id": "nyx-4",
+    "title": "nyx-4",
+    "author": "nyx",
+    "date": "2025-01-01",
+    "duration": 600,
+    "tags": [
+      7,
+      9,
+      6,
+      11
+    ],
+    "categories": [
+      0,
+      4
+    ],
+    "series": null,
+    "seriesIndex": null,
+    "cover": null,
+    "audio": "media/audio/nyx/nyx-4.mp3",
+    "bytes": 1413,
+    "summary": "The fourth fixture recording.",
+    "variant": null,
+    "hasTranscript": false,
+    "spoilerCount": 0,
+    "spoilerUnlisted": 0
+  },
+  {
+    "id": "from-file",
+    "title": "File transcript",
+    "author": "extra",
+    "date": "2024-01-03",
+    "duration": 12,
+    "tags": [
+      12,
+      13
+    ],
+    "categories": [],
+    "series": "Series",
+    "seriesIndex": 3,
+    "cover": null,
+    "audio": null,
+    "bytes": null,
+    "summary": "",
+    "variant": null,
+    "hasTranscript": true,
+    "spoilerCount": 0,
+    "spoilerUnlisted": 0
+  }
+]

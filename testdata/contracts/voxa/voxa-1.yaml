@@ -1,0 +1,19 @@
+apiVersion: hypnotica/v1
+kind: Item
+id: voxa-1
+title: voxa-1
+author: voxa
+audio: ../media/voxa-1.mp3
+date: 2025-01-04
+duration: 300
+summary: The first fixture recording.
+description: <p>The first fixture recording.</p>
+categories:
+- Audio
+- Hypnosis
+tags:
+- 'Audience: F4M'
+- Femdom
+- 'Induction: Confusion'
+- 'Production: Subliminals'
+- 'Trigger: Snap'

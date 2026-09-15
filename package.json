@@ -1,0 +1,19 @@
+{
+  "name": "hypnotica",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "author": {
+    "name": "Naomi Persephone Amethyst",
+    "email": "naomi@amethyst.name"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "sh tests/run.sh"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1"
+  }
+}

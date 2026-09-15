@@ -1,0 +1,14 @@
+{
+  "voxa-1": {
+    "id": "voxa-1",
+    "description": "<p>The first fixture recording.</p>"
+  },
+  "voxa-2": {
+    "id": "voxa-2",
+    "description": "<p>The second fixture recording.</p>"
+  },
+  "voxa-3": {
+    "id": "voxa-3",
+    "description": "<p>The third fixture recording.</p>"
+  }
+}

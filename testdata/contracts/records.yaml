@@ -1,0 +1,109 @@
+kind: Author
+id: extra
+name: Extra Author
+description: <p>Writing <em>here</em></p><img src="https://example.com/pixel">
+summary: Summary
+synopsis: A synopsis
+explicit: false
+language: fr
+url: https://example.com/extra
+image: media/cover.svg
+links:
+  website: https://example.com
+cover_prompts:
+  tagged: red, blue
+  natural: A red square
+  negative: noise
+provenance:
+  generated:
+  - synopsis
+  - image
+similar:
+- id: voxa
+  score: 0.92345
+  same_person: false
+---
+kind: Item
+title: Café — Morning
+author: extra
+date: '2026-03-05T12:30:00+02:00'
+audio: media/voxa-1.mp3
+cover: media/cover.svg
+video: media/video.mp4
+duration: '1:02:03.5'
+tags: 'Nature, Voice: Soft'
+categories:
+- Audio
+- Free
+series:
+  name: Walks
+  part: 2
+summary: Morning summary
+description: <p>A long walk with <strong>words</strong> and <a href="https://example.com/?a=1&b=2"
+  class="x">a link</a>.</p><script>bad</script>
+acoustic:
+  f0_median_hz: 196
+  hnr_db: 12.4
+transcript: Welcome to the morning. Quiet trees and soft footsteps.
+transcript_segments:
+- start: 0
+  end: 1
+  text: Welcome
+- start: 1
+  end: 4
+  text: Quiet trees
+spoilers:
+- effect: A surprise
+  disclosure: declared
+  timestamp: 0:15
+- Another note
+source_url: https://example.com/source
+explicit: 'no'
+variant: Long cut
+also_titled:
+- The morning
+- Early walk
+cover_prompts:
+  natural: An early walk
+provenance:
+  generated:
+  - title
+  - summary
+  - cover
+---
+kind: Item
+id: transcript-doc
+title: Document transcript
+author: extra
+date: 5 March 2025
+audio: media/voxa-2.mp3
+duration: 22
+---
+kind: Transcript
+item: transcript-doc
+text: Document supplied words
+model: test-model
+segments:
+- start: 0
+  end: 2
+  text: Document supplied words
+---
+kind: Item
+id: from-file
+title: File transcript
+author: extra
+transcript_file: supplied.txt
+published: 2024/01/03
+series: Series
+series_index: '3'
+tags:
+- one
+- two
+duration: 12.5
+---
+kind: Config
+site: {}
+---
+kind: Tags
+content:
+  unused: ignored

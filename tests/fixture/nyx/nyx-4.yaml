@@ -1,0 +1,18 @@
+apiVersion: hypnotica/v1
+kind: Item
+id: nyx-4
+title: nyx-4
+author: nyx
+audio: ../media/nyx-4.mp3
+date: 2025-01-01
+duration: 600
+summary: The fourth fixture recording.
+description: <p>The fourth fixture recording.</p>
+categories:
+- Audio
+- Roleplay
+tags:
+- 'Audience: F4A'
+- ASMR-ish
+- 'Trigger: Snap'
+- 'Induction: Conversational'

@@ -1,0 +1,6 @@
+apiVersion: hypnotica/v1
+kind: Author
+id: voxa
+name: Voxa
+url: https://example.com/voxa
+description: A fixture creator.

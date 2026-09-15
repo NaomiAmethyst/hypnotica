@@ -1,0 +1,43 @@
+{
+  "cafe-morning--long-cut": {
+    "id": "cafe-morning--long-cut",
+    "description": "<p>A long walk with <strong>words</strong> and <a href=\"https://example.com/?a=1&amp;b=2\" rel=\"noreferrer nofollow\" target=\"_blank\">a link</a>.</p>",
+    "sourceUrl": "https://example.com/source",
+    "transcriptSource": "source",
+    "acoustic": {
+      "f0_median_hz": 196,
+      "hnr_db": 12.4
+    },
+    "video": "media/video/extra/cafe-morning--long-cut.mp4",
+    "coverPrompts": {
+      "natural": "An early walk"
+    },
+    "generated": [
+      "title",
+      "summary",
+      "cover"
+    ]
+  },
+  "transcript-doc": {
+    "id": "transcript-doc",
+    "transcriptSource": "test-model"
+  },
+  "from-file": {
+    "id": "from-file",
+    "transcriptSource": "source"
+  },
+  "_author": {
+    "coverPrompts": {
+      "tagged": "red, blue",
+      "natural": "A red square",
+      "negative": "noise"
+    },
+    "similar": [
+      {
+        "id": "voxa",
+        "score": 0.923,
+        "same_person": false
+      }
+    ]
+  }
+}

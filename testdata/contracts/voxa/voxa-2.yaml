@@ -1,0 +1,16 @@
+apiVersion: hypnotica/v1
+kind: Item
+id: voxa-2
+title: voxa-2
+author: voxa
+audio: ../media/voxa-2.mp3
+date: 2025-01-03
+duration: 1500
+summary: The second fixture recording.
+description: <p>The second fixture recording.</p>
+categories:
+- Audio
+tags:
+- 'Audience: F4A'
+- Femdom
+- 'Compulsion: Relisten'

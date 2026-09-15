@@ -449,6 +449,7 @@ func tagGlossary(root string, items []*Item) object {
 		"production": "Production",
 		"trigger":    "Trigger",
 		"compulsion": "Compulsion",
+		"cw":         "CW",
 	}
 	for kind, value := range registry {
 		for name, value := range mapping(value) {

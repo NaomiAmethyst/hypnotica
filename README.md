@@ -9,6 +9,12 @@ required. Audio probing and web assets are embedded in the executable.
 
 ## Build and run
 
+Prebuilt binaries for Linux, Windows, and macOS (amd64 and arm64) are available
+from [GitHub Releases](https://github.com/NaomiAmethyst/hypnotica/releases).
+Use the `darwin` archive for macOS. Each archive includes license notices and a
+source link; a matching `.sha256` file contains its checksum. Development
+builds are available as artifacts in [GitHub Actions](https://github.com/NaomiAmethyst/hypnotica/actions).
+
 Install Go 1.26 or newer, then build from this checkout:
 
 ```sh
@@ -24,6 +30,17 @@ and offline storage require a secure context (localhost also works).
 
 Source options work before or after the subcommand. `build`, `check`, `serve`,
 and `init` each support `--help`. `init` leaves existing files alone.
+
+### Container
+
+The image supports Linux amd64 and arm64. `latest` tracks the default branch;
+use a version tag such as `v1.0.0` for a tagged release.
+
+```sh
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/naomiamethyst/hypnotica:latest \
+  build -s content -o www --base-url https://audio.example.com
+```
 
 ## Content
 

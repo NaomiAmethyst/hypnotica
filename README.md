@@ -114,6 +114,11 @@ tool also manages that directory. `--force` recopies and retags media.
   author, duration, and offline availability.
 - Persistent audio player, reorderable queue, playback speed, resume positions,
   playlists, keyboard shortcuts, and Media Session controls.
+- A heart on every recording and creator, and a favourites page of what it
+  collects.
+- Playlists and favourites export to a JSON file and import back on another
+  device. An import is merged into what is already there: it adds and updates,
+  and never removes.
 - Installable PWA with offline downloads and seeking in saved audio.
 - Progressive catalogue loading, IndexedDB caching, and virtualized grids for
   large libraries.

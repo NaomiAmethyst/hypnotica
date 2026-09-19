@@ -30,6 +30,7 @@ type Item struct {
 	Summary, Description, Transcript, TranscriptSource, SourceURL string
 	Segments                                                      any
 	Acoustic                                                      object
+	Sound                                                         object
 	Spoilers                                                      []object
 	CoverPrompts                                                  object
 	Provenance                                                    object
@@ -289,6 +290,7 @@ func newItem(d object, path string) (*Item, error) {
 		SourceURL:        str(first(d["source_url"], d["url"])),
 		Segments:         d["transcript_segments"],
 		Acoustic:         mapping(d["acoustic"]),
+		Sound:            mapping(d["sound"]),
 		Spoilers:         spoilers(d["spoilers"]),
 		CoverPrompts:     prompts(d["cover_prompts"]),
 		Provenance:       mapping(d["provenance"]),
@@ -394,6 +396,9 @@ func (i *Item) detail() object {
 	}
 	if len(i.Acoustic) > 0 {
 		out["acoustic"] = i.Acoustic
+	}
+	if len(i.Sound) > 0 {
+		out["sound"] = i.Sound
 	}
 	if len(i.CoverPrompts) > 0 {
 		out["coverPrompts"] = i.CoverPrompts

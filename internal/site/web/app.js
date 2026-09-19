@@ -10,6 +10,7 @@ const K = {
   rate: "hyp.rate",
   filters: "hyp.filters",
   dlqueue: "hyp.dlqueue",
+  favs: "hyp.favourites",
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -162,13 +163,18 @@ function paintProgress() {
 }
 
 /* --------------------------------------------------------------- playlists */
+/* Unique even inside one millisecond: an import creating six playlists at once
+   would otherwise give them all the same id. */
+let listTick = 0;
+const newListId = () => "pl" + Date.now().toString(36) + (listTick++).toString(36);
+
 const Playlists = {
   all() { return load(K.playlists, []); },
   get(id) { return this.all().find(p => p.id === id); },
   write(list) { save(K.playlists, list); },
   create(name, items = []) {
     const list = this.all();
-    const pl = { id: "pl" + Date.now().toString(36), name: name || "Untitled playlist",
+    const pl = { id: newListId(), name: name || "Untitled playlist",
                  items: [...items], created: Date.now(), updated: Date.now() };
     list.push(pl); this.write(list); return pl;
   },
@@ -179,6 +185,186 @@ const Playlists = {
   remove(id) { this.write(this.all().filter(p => p.id !== id)); },
   addItems(id, ids) {
     this.update(id, pl => { for (const i of ids) if (!pl.items.includes(i)) pl.items.push(i); });
+  },
+};
+
+/* -------------------------------------------------------------- favourites */
+/* Two bags of ids -- recordings and creators -- each remembering when it was
+   liked, because "what I liked recently" is the order a favourites page wants
+   and nothing else in the app records it.
+
+   Held as the export writes it, so what is kept and what is shared are one
+   shape to reason about and one shape to document. Times are ISO on disk and
+   milliseconds in memory; a hand-written `["id", "id"]` list is accepted too,
+   because someone will write one. */
+const favTime = v => {
+  const t = typeof v === "number" ? v : Date.parse(v);
+  return Number.isFinite(t) ? t : 0;
+};
+
+/* A Map, not an object: an id from a file somewhere else is a key nobody here
+   chose, and `__proto__` is a key. */
+function favBag(raw) {
+  const bag = new Map();
+  if (Array.isArray(raw)) {
+    for (const id of raw) if (typeof id === "string" && id) bag.set(id, 0);
+    return bag;
+  }
+  if (!raw || typeof raw !== "object") return bag;
+  for (const [id, when] of Object.entries(raw)) if (id) bag.set(id, favTime(when));
+  return bag;
+}
+
+const Favourites = {
+  held: null,
+  read() {
+    if (!this.held) {
+      const raw = load(K.favs, null) || {};
+      this.held = { items: favBag(raw.items), authors: favBag(raw.authors) };
+    }
+    return this.held;
+  },
+  bag(what) { return this.read()[what === "author" ? "authors" : "items"]; },
+  has(what, id) { return this.bag(what).has(id); },
+  /* Most recently liked first. Entries with no time keep the order the file
+     they came from listed them in, which is the only order such a file has. */
+  ids(what) { return [...this.bag(what)].sort((a, b) => b[1] - a[1]).map(([id]) => id); },
+  toggle(what, id) {
+    const bag = this.bag(what);
+    if (bag.has(id)) bag.delete(id); else bag.set(id, Date.now());
+    this.write();
+    return bag.has(id);
+  },
+  /* The earliest time wins. Two devices that both liked something disagree only
+     about when, and the first time is the true one. Answers whether this was
+     new here, which is what an import report counts. */
+  add(what, id, when) {
+    const bag = this.bag(what), t = favTime(when) || Date.now();
+    if (!bag.has(id)) { bag.set(id, t); return true; }
+    const held = bag.get(id);
+    if (t && (!held || t < held)) bag.set(id, t);
+    return false;
+  },
+  write() { save(K.favs, this.plain()); },
+  plain() {
+    const out = what => Object.fromEntries([...this.bag(what)]
+      .map(([id, t]) => [id, t ? new Date(t).toISOString() : ""]));
+    return { items: out("item"), authors: out("author") };
+  },
+};
+
+/* ------------------------------------------------ playlists and favourites
+                                                     as a file to carry away */
+/* One file carries both, because somebody setting up a second device wants
+   both and should not have to think about which file is which.
+
+   An import is merged and never replaces: a file written on a phone that holds
+   a quarter of the library must not take anything away from the machine that
+   holds all of it. Ids it names that are not here are kept rather than dropped,
+   so a playlist shared by somebody with more of the library than you fills in
+   the day the rest of it arrives. */
+const TRANSFER = 1;
+
+const Share = {
+  bundle({ playlists = null, favourites = false } = {}) {
+    const stamp = ms => (ms ? new Date(ms).toISOString() : "");
+    const out = { hypnotica: TRANSFER, exported: new Date().toISOString() };
+    if (DATA.site?.title) out.site = DATA.site.title;
+    if (playlists) {
+      out.playlists = playlists.map(p => ({
+        id: p.id, name: p.name, created: stamp(p.created), updated: stamp(p.updated),
+        items: [...p.items],
+      }));
+    }
+    if (favourites) out.favourites = Favourites.plain();
+    return out;
+  },
+
+  /* Lenient about what it is handed, strict about what it returns. A whole
+     export, a bare list of playlists, or one playlist on its own all read the
+     same way -- the last of those is what somebody gets when they copy one
+     object out of a file to send to a friend. */
+  parse(text) {
+    let raw;
+    try { raw = JSON.parse(text); } catch { throw new Error("That is not JSON."); }
+    if (Array.isArray(raw)) raw = { playlists: raw };
+    else if (raw && typeof raw === "object" && Array.isArray(raw.items)
+             && !raw.playlists && !raw.favourites) raw = { playlists: [raw] };
+    if (!raw || typeof raw !== "object") throw new Error("Nothing to import in that.");
+    if (Number(raw.hypnotica ?? TRANSFER) > TRANSFER) {
+      throw new Error("That file came from a newer Hypnotica.");
+    }
+    const lists = Array.isArray(raw.playlists) ? raw.playlists : [];
+    const fav = raw.favourites && typeof raw.favourites === "object" ? raw.favourites : {};
+    const out = {
+      playlists: lists.filter(p => p && typeof p === "object").map(p => ({
+        id: typeof p.id === "string" ? p.id : "",
+        name: typeof p.name === "string" && p.name.trim() ? p.name.trim() : "Imported playlist",
+        named: typeof p.name === "string" && !!p.name.trim(),
+        created: favTime(p.created),
+        updated: favTime(p.updated),
+        items: (Array.isArray(p.items) ? p.items : []).filter(i => typeof i === "string" && i),
+      })),
+      items: favBag(fav.items),
+      authors: favBag(fav.authors),
+    };
+    if (!out.playlists.length && !out.items.size && !out.authors.size) {
+      throw new Error("No playlists or favourites in that file.");
+    }
+    return out;
+  },
+
+  /* Playlists are matched by id, which is how the same playlist on two devices
+     stays one playlist through any number of round trips. A playlist that is
+     already here gains the entries it is missing and keeps the ones it has;
+     the name follows only if the file's copy was edited more recently. */
+  merge(payload) {
+    const report = { added: 0, updated: 0, items: 0, authors: 0, missing: 0 };
+    const list = Playlists.all();
+    const byId = new Map(list.map(p => [p.id, p]));
+    for (const inc of payload.playlists) {
+      const held = inc.id ? byId.get(inc.id) : null;
+      if (held) {
+        const gained = inc.items.filter(id => !held.items.includes(id));
+        const rename = inc.named && inc.name !== held.name
+                       && inc.updated > (held.updated || 0);
+        if (!gained.length && !rename) continue;
+        held.items.push(...gained);
+        if (rename) held.name = inc.name;
+        held.updated = Date.now();
+        report.updated++;
+      } else {
+        const pl = { id: inc.id && !byId.has(inc.id) ? inc.id : newListId(),
+                     name: inc.name, items: [...inc.items],
+                     created: inc.created || Date.now(),
+                     updated: inc.updated || Date.now() };
+        list.push(pl); byId.set(pl.id, pl); report.added++;
+      }
+    }
+    Playlists.write(list);
+    for (const [id, when] of payload.items) {
+      if (Favourites.add("item", id, when)) report.items++;
+    }
+    for (const [id, when] of payload.authors) {
+      if (Favourites.add("author", id, when)) report.authors++;
+    }
+    Favourites.write();
+    report.missing = this.strangers(payload);
+    return report;
+  },
+
+  /* What the file names that this build has never heard of. Not an error and
+     not dropped -- said out loud, because the alternative is a playlist that
+     silently arrives four entries short. */
+  strangers(payload) {
+    const ids = new Set();
+    for (const p of payload.playlists) for (const id of p.items) ids.add(id);
+    for (const [id] of payload.items) ids.add(id);
+    let n = [...ids].filter(id => !BY_ID.has(id)).length;
+    for (const [id] of payload.authors) {
+      if (!DATA.authors.some(a => a.id === id)) n++;
+    }
+    return n;
   },
 };
 
@@ -783,6 +969,75 @@ function measuredPanel(a) {
   return `<div class="measured"><div class="bands">${rows.join("")}</div>${voice}</div>`;
 }
 
+/* What a recording sounds like, for the ones that do not say anything.
+
+   Kept out of the provenance fold and given its own panel, because for a
+   wordless recording this is not a footnote about how the entry was made -- it
+   is the only description there is, and the reason the transcript is missing. */
+const BEAT_BANDS = { delta: "deep sleep range", theta: "drowsy, hypnagogic range",
+                     alpha: "relaxed, eyes-closed range", beta: "alert range",
+                     gamma: "above the usual entrainment range" };
+
+function soundPanel(sn) {
+  if (!sn || typeof sn !== "object") return "";
+  const t = sn.tones && typeof sn.tones === "object" ? sn.tones : null;
+  const figs = [];
+  const fig = (label, shown, why, reading) => figs.push(`<div class="band">
+    <b>${esc(label)}</b><span class="fig" title="${esc(why)}">${esc(shown)}</span>
+    ${reading ? `<i>${esc(reading)}</i>` : ""}</div>`);
+  if (typeof sn.voice_confidence === "number") {
+    const v = sn.voice_confidence;
+    fig("Speech", v.toFixed(2),
+        "How sure the sound tagger is that somebody is speaking, judged from the audio alone and never from the transcript. Its classes are scored one by one, so this does not compete with anything else heard here.",
+        v < 0.25 ? "no voice detected" : v < 0.5 ? "sparse or quiet" : "present throughout");
+  }
+  if (t) {
+    if (t.carrier_steady && typeof t.carrier_hz === "number")
+      fig("Carrier", `${Math.round(t.carrier_hz)} Hz`,
+          "The tone itself, as measured in the left channel.",
+          t.carrier_drift && t.carrier_drift !== "steady" ? t.carrier_drift : "");
+    if (typeof t.beat_hz === "number" && t.beat_hz >= 0.5)
+      fig("Binaural beat", `${t.beat_hz.toFixed(1)} Hz`,
+          "The difference between the ears. It is not in the file — it happens in the listener, and only over headphones.",
+          BEAT_BANDS[t.beat_band] || "");
+    else if (typeof t.beat_hz === "number")
+      fig("Binaural beat", "none",
+          "Both channels carry the same tone, so there is no difference for the listener to hear as a beat.", "");
+    if (typeof t.pulse_hz === "number" && t.pulse_strength > 0.15)
+      fig("Pulse", `${t.pulse_hz.toFixed(1)} Hz`,
+          "A real rise and fall in level, measured in one channel — unlike the beat, this one is in the audio.", "");
+  }
+  /* The two label sets answer different questions and must not be run together.
+     The ranked ones are the closest match from a list the model was given and
+     could not refuse; the classes are scored independently, so several can be
+     true at once and none of them is competing. */
+  const RANKED_WHY = "The closest match from the vocabulary this library offers the audio-text model. It ranks what it is given and cannot answer \u2018none of these\u2019, so these are shown only when the match was close enough to mean something.";
+  const CLASS_WHY = "From a fixed 527-class sound ontology, each class scored on its own. Several can be true at once, which is why speech and mouth sounds can both appear.";
+  const row = (label, items, why) => items && items.length
+    ? `<p class="sndrow"><b title="${esc(why)}">${esc(label)}</b>${items.map(c =>
+        `<span class="chip" title="${esc(why)}">${esc(c)}</span>`).join("")}</p>`
+    : "";
+  const ranked = sn.fits === false ? [] : (sn.sounds || []);
+  const classes = sn.classes || [];
+  const wordless = sn.wordless || sn.speech === "none";
+  if (!figs.length && !ranked.length && !classes.length && !wordless && !sn.reads_as) return "";
+  const hoverable = figs.length || ranked.length || classes.length;
+  return `<details class="snd"${wordless ? " open" : ""}>
+    <summary>What this sounds like${wordless ? ` <span class="cnt">no speech</span>` : ""}</summary>
+    ${wordless ? `<p class="note">There is no transcript because there is nothing to
+      transcribe: a pass that identifies sound rather than speech found no voice in this
+      recording. What follows was measured and heard, not read.</p>`
+    : `<p class="note">Measured from the audio and identified by models that listen for
+      sound rather than words.${hoverable ? " Hover any figure or label for what it means." : ""}</p>`}
+    ${sn.reads_as ? `<p class="reads">${esc(sn.reads_as)}</p>` : ""}
+    ${figs.length ? `<div class="measured"><div class="bands">${figs.join("")}</div></div>` : ""}
+    ${row("Sounds most like", ranked, RANKED_WHY)}
+    ${row("Also heard", classes, CLASS_WHY)}
+    ${sn.fits === false ? `<p class="note">Nothing in the vocabulary matched this closely
+      enough to name, so only the independently scored classes are shown.</p>` : ""}
+  </details>`;
+}
+
 /* The brief a picture was drawn from, and the list of what else on the page was
    made rather than found. Closed by default: it answers a question somebody has
    only once they have started wondering. */
@@ -882,7 +1137,8 @@ function render() {
   if (moved && CURRENT_ROUTE) SCROLL.set(CURRENT_ROUTE, mark);
   const main = $("#main");
   const views = { library: viewLibrary, item: viewItem, author: viewAuthor,
-                  authors: viewAuthors, playlists: viewPlaylists, playlist: viewPlaylist,
+                  authors: viewAuthors, favourites: viewFavourites,
+                  playlists: viewPlaylists, playlist: viewPlaylist,
                   queue: viewQueue, offline: viewOffline };
   // Fetch what this view needs, then draw again when it lands. Rendering first
   // means the page appears immediately and fills in, rather than waiting.
@@ -895,7 +1151,9 @@ function render() {
   if (r.name === "library" && F.q) { loadSearch(); refreshTranscriptHits(); }
   Grid.stop();
   main.innerHTML = (views[r.name] || viewLibrary)(r.arg);
-  if (r.name === "library" || r.name === "author") Grid.start(LAST_ROWS);
+  if (r.name === "library" || r.name === "author" || r.name === "favourites") {
+    Grid.start(LAST_ROWS);
+  }
   $$(".navlinks a").forEach(a =>
     a.classList.toggle("active", a.getAttribute("href") === "#/" + (r.name === "library" ? "" : r.name)));
   // `toggle` does not bubble, so the facet panels are wired on every render.
@@ -1136,6 +1394,50 @@ function visibleTags(it) {
 function cardTags(it) { return visibleTags(it).slice(0, 6); }
 function hiddenTagCount(it) { return realTags(it).length - visibleTags(it).length; }
 
+/* The heart. Two glyphs rather than one glyph in two colours, because a filled
+   heart and an outlined one are told apart by anybody, including whoever is
+   reading this in monochrome or with the page's colours overridden.
+
+   Text presentation is asked for explicitly: left alone, a browser is entitled
+   to swap a black heart for a red emoji picture, which is somebody else's
+   design sitting in the middle of this one. */
+const HEART_ON = "♥︎", HEART_OFF = "♡";
+
+function heartState(what, id) {
+  const on = Favourites.has(what, id);
+  const noun = what === "author" ? "creator" : "recording";
+  return { on, glyph: on ? HEART_ON : HEART_OFF, word: on ? "Favourited" : "Favourite",
+           say: on ? `Remove this ${noun} from favourites` : `Add this ${noun} to favourites` };
+}
+
+/* `label` puts the word beside the heart: room enough on an item or creator
+   page, never on a card. Without it the button's name comes from `aria-label`;
+   with it, from the word itself, which is what somebody saying "favourite"
+   to a voice control expects to hit. */
+function heart(what, id, { label = false } = {}) {
+  const s = heartState(what, id);
+  return `<button class="${label ? "btn " : ""}heart${s.on ? " on" : ""}" data-act="fav"
+    data-what="${esc(what)}" data-fid="${esc(id)}" aria-pressed="${s.on}"
+    title="${esc(s.say)}"${label ? "" : ` aria-label="${esc(s.say)}"`}><span class="gl"
+    aria-hidden="true">${s.glyph}</span>${label ? `<span class="wd">${s.word}</span>` : ""}</button>`;
+}
+
+/* Liking something changes that button and nothing else on the page, so the
+   button is what gets repainted. A full redraw would rebuild the grid and the
+   reader's place in it to move one glyph. */
+function paintHearts(what, id) {
+  const s = heartState(what, id);
+  for (const b of $$("button.heart")) {
+    if (b.dataset.what !== what || b.dataset.fid !== id) continue;
+    b.classList.toggle("on", s.on);
+    b.setAttribute("aria-pressed", String(s.on));
+    b.title = s.say;
+    if (b.hasAttribute("aria-label")) b.setAttribute("aria-label", s.say);
+    const gl = b.querySelector(".gl"); if (gl) gl.textContent = s.glyph;
+    const wd = b.querySelector(".wd"); if (wd) wd.textContent = s.word;
+  }
+}
+
 function card(it) {
   const a = DATA.authors.find(x => x.id === it.author);
   const off = Offline.has(it), q = Offline.isQueued(it.id);
@@ -1166,6 +1468,7 @@ function card(it) {
         <button class="btn sm" data-act="addto">+ List</button>
         ${off ? `<button class="btn sm" data-act="unsave">Remove</button>`
               : `<button class="btn sm" data-act="save"${q ? " disabled" : ""}>${q ? "Queued" : "Save"}</button>`}` : ""}
+        ${heart("item", it.id)}
       </div>
     </div></div>`;
 }
@@ -1503,8 +1806,8 @@ let LAST_ROWS = [];
    rebuilt, on a page whose height it has no way to predict. */
 const SCROLL = new Map();
 let CURRENT_ROUTE = null;
-const KEEPS_PLACE = new Set(["library", "author", "authors", "playlist",
-                             "playlists", "queue", "offline"]);
+const KEEPS_PLACE = new Set(["library", "author", "authors", "favourites",
+                             "playlist", "playlists", "queue", "offline"]);
 
 function scrollMark() {
   return { y: window.scrollY, chunks: Grid.chunks.length };
@@ -1700,6 +2003,20 @@ function similarPanel(id) {
   </section>`;
 }
 
+function authorCard(a) {
+  const n = (BY_AUTHOR.get(a.id) || []).length;
+  // The synopsis is what the library knows about them; their own summary is
+  // marketing, and is the fallback rather than the first choice.
+  const blurb = a.synopsis || a.summary || "";
+  return `<div class="card"><a class="thumb" href="#/author/${encodeURIComponent(a.id)}"
+    >${a.image ? `<img loading="lazy" src="${esc(a.image)}" alt="">` : ""}</a>
+    <div class="body"><h3><a href="#/author/${encodeURIComponent(a.id)}">${esc(a.name)}</a></h3>
+    <div class="meta"><span>${n} file${n === 1 ? "" : "s"}</span></div>
+    ${blurb ? `<p class="note blurb">${esc(blurb)}</p>` : ""}
+    <div class="tags">${chips(authorCardTags(a.id))}</div>
+    <div class="cardacts">${heart("author", a.id)}</div></div></div>`;
+}
+
 function viewAuthors() {
   const rows = DATA.authors.slice();
   if (F.asort === "name") {
@@ -1717,18 +2034,7 @@ function viewAuthors() {
     </select>
     <span class="count">${rows.length} creators</span>
   </div>
-  <div class="grid">${rows.map(a => {
-    const n = (BY_AUTHOR.get(a.id) || []).length;
-    // The synopsis is what the library knows about them; their own summary is
-    // marketing, and is the fallback rather than the first choice.
-    const blurb = a.synopsis || a.summary || "";
-    return `<div class="card"><a class="thumb" href="#/author/${encodeURIComponent(a.id)}"
-      >${a.image ? `<img loading="lazy" src="${esc(a.image)}" alt="">` : ""}</a>
-      <div class="body"><h3><a href="#/author/${encodeURIComponent(a.id)}">${esc(a.name)}</a></h3>
-      <div class="meta"><span>${n} file${n === 1 ? "" : "s"}</span></div>
-      ${blurb ? `<p class="note blurb">${esc(blurb)}</p>` : ""}
-      <div class="tags">${chips(authorCardTags(a.id))}</div></div></div>`;
-  }).join("")}</div>`;
+  <div class="grid">${rows.map(authorCard).join("")}</div>`;
 }
 
 function viewAuthor(id) {
@@ -1753,6 +2059,7 @@ function viewAuthor(id) {
         <button class="btn primary" data-act="playAuthor" data-author="${esc(a.id)}">Play all</button>
         <button class="btn" data-act="queueAuthor" data-author="${esc(a.id)}">Queue all</button>
         <button class="btn" data-act="saveAuthor" data-author="${esc(a.id)}">Save offline</button>
+        ${heart("author", a.id, { label: true })}
       </div>
     </div>
   </div>
@@ -1857,6 +2164,7 @@ function viewItem(id) {
       <button class="btn" data-act="addto1" data-id="${esc(it.id)}">Add to playlist</button>
       ${off ? `<button class="btn" data-act="unsave1" data-id="${esc(it.id)}">Remove download</button>`
             : `<button class="btn" data-act="save1" data-id="${esc(it.id)}"${q ? " disabled" : ""}>${q ? "Queued" : "Save offline"}</button>`}` : ""}
+      ${heart("item", it.id, { label: true })}
     </div>
     <div class="prose">${d.description || `<p>${esc(it.summary)}</p>`}
       ${genMark(gen, d.description ? "description" : "summary")}</div>
@@ -1877,12 +2185,46 @@ function viewItem(id) {
         treat them as a lead, not a verdict.</p>
       <div id="spBody"><p class="note">Loading…</p></div></details>` : ""}
     ${it.hasTranscript ? `<details class="tr" id="trBox"><summary>Transcript</summary>
-      <p class="note">${detailOf(it).transcriptSource === "source"
-        ? "Transcript as supplied with the source."
-        : "Automatic transcript — expect occasional errors."}</p>
+      <p class="note">${transcriptNote(detailOf(it).transcriptSource)}</p>
       <div id="trBody"><p class="note">Loading…</p></div></details>` : ""}
+    ${soundPanel(d.sound)}
     ${provPanel(gen, d.coverPrompts, "entry", d.acoustic)}
   </article>`;
+}
+
+/* Everything liked, in the order it was liked, creators before recordings --
+   a shorter list of bigger things reads better at the top, and the recordings
+   below it are the windowed grid the library and creator pages use, because a
+   favourites list is as long as somebody wants it to be. */
+function viewFavourites() {
+  const itemIds = Favourites.ids("item"), authorIds = Favourites.ids("author");
+  const rows = itemIds.map(id => BY_ID.get(id)).filter(Boolean);
+  const authors = authorIds.map(id => DATA.authors.find(a => a.id === id)).filter(Boolean);
+  LAST_ROWS = rows;
+  const away = (itemIds.length - rows.length) + (authorIds.length - authors.length);
+  const secs = rows.reduce((s, i) => s + i.duration, 0);
+  const any = itemIds.length || authorIds.length;
+  return `<h1 style="margin-top:18px">Favourites</h1>
+  <div class="actions">
+    ${rows.length ? `<button class="btn primary" id="favPlay">Play all</button>
+    <button class="btn" id="favQueue">Queue all</button>
+    <button class="btn" id="favSave">Save offline</button>
+    <button class="btn" id="favList">Save as playlist</button>` : ""}
+    <button class="btn" id="favExport"${any ? "" : " disabled"}>Export</button>
+    <button class="btn" id="favImport">Import</button>
+  </div>
+  ${any ? `<p class="kv">${rows.length} recording${rows.length === 1 ? "" : "s"}${
+    secs ? ` · ${fmtDur(secs)}` : ""}${authors.length
+      ? ` · ${authors.length} creator${authors.length === 1 ? "" : "s"}` : ""}</p>` : ""}
+  ${away ? `<p class="note">${away} favourite${away === 1 ? " is" : "s are"} not in this
+    library. They are kept as they are, and appear here if the library gains them.</p>` : ""}
+  ${authors.length ? `<h3>Creators</h3>
+    <div class="grid">${authors.map(authorCard).join("")}</div>` : ""}
+  ${rows.length ? `${authors.length ? "<h3>Recordings</h3>" : ""}
+    <div class="grid" id="grid"></div><div id="gridEnd"></div>`
+    : !authors.length ? `<div class="empty">Nothing favourited yet. The heart on any
+      recording or creator puts it here — or bring the ones from another device in
+      with “Import”.</div>` : ""}`;
 }
 
 function viewQueue() {
@@ -1909,7 +2251,9 @@ function viewQueue() {
 function viewPlaylists() {
   const all = Playlists.all();
   return `<h1 style="margin-top:18px">Playlists</h1>
-  <div class="actions"><button class="btn primary" id="plNew">New playlist</button></div>
+  <div class="actions"><button class="btn primary" id="plNew">New playlist</button>
+    <button class="btn" id="plExportAll"${all.length ? "" : " disabled"}>Export all</button>
+    <button class="btn" id="plImport">Import</button></div>
   ${all.length ? `<ol class="list">${all.map(p => {
     const items = p.items.map(i => BY_ID.get(i)).filter(Boolean);
     const secs = items.reduce((s, i) => s + i.duration, 0);
@@ -1921,6 +2265,7 @@ function viewPlaylists() {
         <button data-act="plPlay" data-id="${esc(p.id)}" title="Play">▶</button>
         <button data-act="plQueue" data-id="${esc(p.id)}" title="Queue">+</button>
         <button data-act="plSave" data-id="${esc(p.id)}" title="Save offline">⤓</button>
+        <button data-act="plExport" data-id="${esc(p.id)}" title="Export as a file">⤒</button>
         <button data-act="plRename" data-id="${esc(p.id)}" title="Rename">✎</button>
         <button data-act="plDel" data-id="${esc(p.id)}" title="Delete">✕</button>
       </div></li>`;
@@ -1939,6 +2284,7 @@ function viewPlaylist(id) {
     <button class="btn primary" data-act="plPlay" data-id="${esc(pl.id)}">▶ Play all</button>
     <button class="btn" data-act="plQueue" data-id="${esc(pl.id)}">Add to queue</button>
     <button class="btn" data-act="plSave" data-id="${esc(pl.id)}">Save offline</button>
+    <button class="btn" data-act="plExport" data-id="${esc(pl.id)}">Export</button>
     <button class="btn" data-act="plRename" data-id="${esc(pl.id)}">Rename</button>
     <button class="btn" data-act="plDel" data-id="${esc(pl.id)}">Delete</button>
   </div>
@@ -2080,13 +2426,37 @@ async function wireItem(id) {
         `<tr data-s="${s.start}" data-i="${i}"><td class="t" data-act="seek" data-t="${s.start}">${clock(s.start)}</td>
          <td>${mark(esc(s.text), q)}</td></tr>`).join("")}</table>`;
     } else {
-      body.innerHTML = `<pre>${mark(esc(payload.text || "(empty)"), q)}</pre>`;
+      /* No timestamps, which is what a transcript supplied by the creator looks
+         like. It used to render as <pre>, and a supplied transcript is one
+         paragraph per line with lines running to five hundred characters, so
+         the panel became a wall of monospace that scrolled sideways. It is
+         prose; set it as prose. */
+      const paras = String(payload.text || "").split(/\n+/).map(p => p.trim()).filter(Boolean);
+      body.innerHTML = paras.length
+        ? `<div class="plain">${paras.map(p => `<p>${mark(esc(p), q)}</p>`).join("")}</div>`
+        : `<p class="note">No transcript text.</p>`;
     }
   };
   box.addEventListener("toggle", () => box.open && fill());
   if (box.open) fill();
   if (F.q.trim() && F.tr) { box.open = true; fill(); }
 }
+/* Where a transcript came from, and no more than is actually known.
+
+   The field holds six different things across this library -- a model name, a
+   model name with a flag after it, the word "transcript", the word "None", the
+   word "whisper", and "source" -- because it has been written by several
+   passes over several years. Three of those say nothing about provenance, and
+   claiming "automatic" for them was asserting something nobody recorded. */
+function transcriptNote(src) {
+  const s = String(src ?? "").trim();
+  if (s === "source") return "Transcript as supplied with the recording.";
+  if (!s || s === "None" || s === "null" || s === "transcript")
+    return "Transcript — how it was made was not recorded.";
+  if (s === "whisper") return "Automatic transcript — expect occasional errors.";
+  return `Automatic transcript (${s}) — expect occasional errors.`;
+}
+
 function mark(html, q) {
   if (!q) return html;
   const terms = q.split(/\s+/).filter(t => t.length > 1)
@@ -2100,6 +2470,94 @@ function highlightSegments(t, id) {
   let hit = null;
   for (const r of rows) if (+r.dataset.s <= t) hit = r; else break;
   for (const r of rows) r.classList.toggle("on", r === hit);
+}
+
+/* ------------------------------------------------------- import and export */
+const slugOf = s => String(s || "").toLowerCase().normalize("NFKD")
+  .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+function transferName(what, extra = "") {
+  const base = slugOf(DATA.site?.title) || "hypnotica";
+  const mid = slugOf(extra);
+  return `${base}-${what}${mid ? "-" + mid : ""}-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
+/* A file the browser saves, when it will. Downloads started by a page are not
+   available everywhere one of these runs -- an installed web app on a phone may
+   have nowhere to put a file -- and somebody halfway through moving to a new
+   device needs the text more than they need a file, so a refusal falls back to
+   the text itself rather than to an apology. */
+function downloadText(text, name) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.rel = "noopener";
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 20000);
+    return true;
+  } catch { return false; }
+}
+
+function exportBundle(what, bundle, extra = "") {
+  const text = JSON.stringify(bundle, null, 2) + "\n";
+  const name = transferName(what, extra);
+  if (downloadText(text, name)) toast(`Saved ${name}`);
+  else showTransfer(text);
+}
+
+function transferDialog(title, body, foot) {
+  const dlg = $("#ioDlg");
+  if (!dlg) return null;
+  $("#ioTitle").textContent = title;
+  $("#ioBody").innerHTML = body;
+  $("#ioFoot").innerHTML = foot;
+  dlg.showModal();
+  return dlg;
+}
+
+function showTransfer(text) {
+  transferDialog("Export",
+    `<p class="note">This browser would not save a file. Copy the text instead and
+      keep it wherever the other device can reach it.</p>
+     <textarea id="ioOut" rows="8" readonly aria-label="Exported JSON"></textarea>`,
+    `<button class="btn" data-act="ioClose">Close</button>
+     <button class="btn primary" id="ioCopy">Copy</button>`);
+  const box = $("#ioOut");
+  if (box) { box.value = text; box.focus(); box.select(); }
+}
+
+function openImport() {
+  transferDialog("Import",
+    `<p class="note">A file exported from Hypnotica, here or on another device.
+      Playlists already here gain whatever the file adds to them and keep what
+      they have; the rest arrive as new ones, and favourites join yours. Nothing
+      is removed, and an entry this library does not have is kept rather than
+      dropped.</p>
+     <input type="file" id="ioFile" accept="application/json,.json">
+     <p class="note">Or paste the text of the file:</p>
+     <textarea id="ioText" rows="6" aria-label="Exported JSON"
+       placeholder='{"hypnotica": 1, "playlists": […]}'></textarea>`,
+    `<button class="btn" data-act="ioClose">Cancel</button>
+     <button class="btn primary" id="ioGo">Import</button>`);
+}
+
+/* What arrived, said plainly: a merge that adds nothing looks exactly like one
+   that failed unless it says so. */
+function runImport(text) {
+  if (!String(text || "").trim()) { toast("Choose a file, or paste one in."); return; }
+  let payload;
+  try { payload = Share.parse(text); }
+  catch (e) { toast(e.message || "Could not read that."); return; }
+  const r = Share.merge(payload);
+  $("#ioDlg")?.close();
+  const bits = [];
+  if (r.added) bits.push(`${r.added} playlist${r.added === 1 ? "" : "s"}`);
+  if (r.updated) bits.push(`${r.updated} playlist${r.updated === 1 ? "" : "s"} updated`);
+  const favs = r.items + r.authors;
+  if (favs) bits.push(`${favs} favourite${favs === 1 ? "" : "s"}`);
+  toast((bits.length ? `Imported ${bits.join(", ")}` : "Nothing new in that file")
+        + (r.missing ? ` · ${r.missing} not in this library` : ""));
+  render();
 }
 
 /* ------------------------------------------------------------ add-to-modal */
@@ -2187,6 +2645,15 @@ document.addEventListener("click", e => {
       }); render(); return; }
     case "plItemDel": Playlists.update(t.dataset.pl, p => p.items.splice(+t.dataset.i, 1));
       render(); return;
+    case "plExport": { const p = Playlists.get(t.dataset.id); if (!p) return;
+      exportBundle("playlist", Share.bundle({ playlists: [p] }), p.name); return; }
+    /* Liking something is one button changing, everywhere but the page that is
+       a list of what has been liked -- there, it is the page changing. */
+    case "fav": {
+      Favourites.toggle(t.dataset.what, t.dataset.fid);
+      if (route().name === "favourites") render(); else paintHearts(t.dataset.what, t.dataset.fid);
+      return; }
+    case "ioClose": $("#ioDlg")?.close(); return;
   }
 
   switch (t.id) {
@@ -2203,6 +2670,19 @@ document.addEventListener("click", e => {
     case "plNewGo": { const n = $("#plNewName").value.trim() || "New playlist";
       const ids = JSON.parse($("#plDlg").dataset.ids || "[]");
       Playlists.create(n, ids); $("#plDlg").close(); toast("Playlist created"); render(); break; }
+    case "plExportAll": exportBundle("playlists", Share.bundle({ playlists: Playlists.all() })); break;
+    case "plImport": case "favImport": openImport(); break;
+    case "ioGo": runImport($("#ioText")?.value || ""); break;
+    case "ioCopy": { const box = $("#ioOut"); if (!box) break;
+      box.focus(); box.select();
+      navigator.clipboard?.writeText(box.value).then(() => toast("Copied"), () => {});
+      break; }
+    case "favExport": exportBundle("favourites", Share.bundle({ favourites: true })); break;
+    case "favPlay": Player.play(idsOf(Favourites.ids("item"))); break;
+    case "favQueue": Player.enqueue(idsOf(Favourites.ids("item"))); break;
+    case "favSave": Offline.addMany(Favourites.ids("item")); break;
+    case "favList": { const n = prompt("Playlist name", "Favourites");
+      if (n) { Playlists.create(n, Favourites.ids("item")); toast("Playlist saved"); } break; }
     case "dlClear": Offline.clearQueue(); break;
     case "dlWipe": if (confirm("Remove every offline file?")) Offline.removeAll(); break;
     case "pPlay": Player.toggle(); break;
@@ -2247,6 +2727,13 @@ document.addEventListener("input", async e => {
 
 document.addEventListener("change", async e => {
   const t = e.target;
+  if (t.id === "ioFile") {
+    const file = t.files && t.files[0];
+    if (!file) return;
+    try { $("#ioText").value = await file.text(); }
+    catch { toast("Could not read that file."); }
+    return;
+  }
   const map = { fAuthor: "author", fSort: "sort", aSort: "asort" };
   if (map[t.id]) { F[map[t.id]] = t.value; saveFilters(); render(); return; }
   if (t.id === "fTr") { F.tr = t.checked; saveFilters();

@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -63,13 +65,12 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	say := func(format string, a ...any) {
-		if o.Log != nil {
-			fmt.Fprintf(o.Log, format+"\n", a...)
-		}
-	}
-	say("→ scanning %s", c.Source)
+	rep := newReporter(o.Log)
+	say := rep.say
+	scan := rep.phase("scanning "+c.Source, 0)
 	lib := LoadDocuments(c.Source)
+	scan.add(len(lib.Items) + len(lib.Authors))
+	scan.finish("scanned %s", c.Source)
 	r := &BuildResult{Authors: map[string]*Author{}, Items: []*Item{}, Errors: lib.Errors, Warnings: []string{}}
 	for _, a := range lib.Authors {
 		if r.Authors[a.ID] != nil {
@@ -92,6 +93,25 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 		}
 	}
 	say("  %d items, %d authors", len(r.Items), len(r.Authors))
+	// Every picture this build will emit, hashed up front and in parallel, so
+	// that the URL each one is served from says which version it is.
+	stamp := loadStamps(c.Cache)
+	art := []string{}
+	for _, i := range r.Items {
+		if p := resolveAsset(i.Cover, i.SourcePath, c); p != "" {
+			art = append(art, p)
+		}
+	}
+	for _, id := range sortedKeys(r.Authors) {
+		if p := resolveAsset(r.Authors[id].Image, r.Authors[id].SourcePath, c); p != "" {
+			art = append(art, p)
+		}
+	}
+	if len(art) > 0 {
+		ph := rep.phase("stamping artwork", len(art))
+		stamp.warm(art, ph)
+		ph.finish("artwork: %d picture(s) stamped", len(art))
+	}
 	for _, i := range r.Items {
 		i.AudioPath = resolveAsset(i.Audio, i.SourcePath, c)
 		i.VideoPath = resolveAsset(i.Video, i.SourcePath, c)
@@ -131,6 +151,7 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 		}
 	}
 	claimed := map[string]bool{}
+	mp := rep.phase("placing media", len(r.Items))
 	claim := func(stem, ref, found string) {
 		for _, p := range claims(stem, ref, found) {
 			claimed[p] = true
@@ -142,6 +163,7 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 			kind, ref, path string
 			out             *string
 		}{{"cover", i.Cover, i.CoverPath, &i.OutCover}, {"audio", i.Audio, i.AudioPath, &i.OutAudio}, {"video", i.Video, i.VideoPath, &i.OutVideo}} {
+			mp.step()
 			stem := "media/" + asset.kind + "/" + author + "/" + i.ID
 			claim(stem, asset.ref, asset.path)
 			if asset.path == "" {
@@ -153,7 +175,14 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 			if e != nil {
 				return r, fmt.Errorf("place %s: %w", rel, e)
 			}
-			*asset.out = rel
+			// The path on disk stays clean; the version rides on the URL, and
+			// only for pictures. Audio is large, changes almost never, and a
+			// new query string would throw away somebody's offline copy of it.
+			if asset.kind == "cover" {
+				*asset.out = versioned(rel, stamp.of(asset.path))
+			} else {
+				*asset.out = rel
+			}
 			if asset.kind == "audio" {
 				if fresh {
 					r.Copied++
@@ -178,7 +207,7 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 		}
 	}
 	if c.Media != "none" {
-		say("→ media (%s)", c.Media)
+		mp.finish("media (%s)", c.Media)
 	}
 	for _, id := range sortedKeys(r.Authors) {
 		a := r.Authors[id]
@@ -186,38 +215,52 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 		stem := "media/author/" + slugify(a.ID)
 		claim(stem, a.Image, found)
 		if found != "" {
-			a.OutImage = stem + outputExt(a.Image, found)
-			if _, e := place(found, filepath.Join(c.Output, a.OutImage), c.Media, o.Force); e != nil {
+			rel := stem + outputExt(a.Image, found)
+			if _, e := place(found, filepath.Join(c.Output, rel), c.Media, o.Force); e != nil {
 				return r, e
 			}
+			a.OutImage = versioned(rel, stamp.of(found))
 		}
 	}
 	flat := map[string]string{}
 	spoilerData := object{}
+	withText := []*Item{}
 	for _, i := range r.Items {
 		if i.Transcript != "" {
 			flat[i.ID] = i.Transcript
-			segments := i.Segments
-			if !truth(segments) {
-				segments = []any{}
-			}
 			claimed["transcripts/"+i.ID+".json"] = true
 			claimed["transcripts/"+i.ID+".txt"] = true
-			if e := writeJSON(filepath.Join(c.Output, "transcripts", i.ID+".json"), object{"id": i.ID, "source": nullable(i.TranscriptSource), "text": i.Transcript, "segments": segments}); e != nil {
-				return r, e
-			}
-			if e := writeFile(filepath.Join(c.Output, "transcripts", i.ID+".txt"), []byte(i.Transcript)); e != nil {
-				return r, e
-			}
+			withText = append(withText, i)
 		}
 		if len(i.Spoilers) > 0 {
 			spoilerData[i.ID] = i.Spoilers
 		}
 	}
-	say("  %d transcript(s) written", len(flat))
+	// Two files per transcript, and on this library that is nineteen thousand
+	// writes that wait on each other for no reason: nothing here reads what
+	// another one wrote. The bookkeeping above stays sequential because the maps
+	// it fills are shared; only the writing fans out.
+	tp := rep.phase("writing transcripts", len(withText))
+	if e := inParallel(withText, func(i *Item) error {
+		segments := i.Segments
+		if !truth(segments) {
+			segments = []any{}
+		}
+		if e := writeJSON(filepath.Join(c.Output, "transcripts", i.ID+".json"), object{"id": i.ID, "source": nullable(i.TranscriptSource), "text": i.Transcript, "segments": segments}); e != nil {
+			return e
+		}
+		tp.step()
+		return writeFile(filepath.Join(c.Output, "transcripts", i.ID+".txt"), []byte(i.Transcript))
+	}); e != nil {
+		return r, e
+	}
+	tp.finish("%d transcript(s) written", len(flat))
+	wp := rep.phase("building the word index", len(flat))
 	if e := writeWordIndex(filepath.Join(c.Output, "data", "words"), flat); e != nil {
 		return r, e
 	}
+	wp.add(len(flat))
+	wp.finish("word index over %d transcript(s)", len(flat))
 	if e := writeJSON(filepath.Join(c.Output, "data", "spoilers.json"), spoilerData); e != nil {
 		return r, e
 	}
@@ -295,7 +338,8 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 		details[i.Author][i.ID] = i.detail()
 		search[i.ID] = i.searchText()
 	}
-	for _, id := range sortedKeys(details) {
+	shards := sortedKeys(details)
+	for _, id := range shards {
 		a := r.Authors[id]
 		side := object{}
 		if len(a.CoverPrompts) > 0 {
@@ -308,11 +352,15 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 			details[id]["_author"] = side
 		}
 		claimed["data/detail/"+slugify(id)+".json"] = true
-		if e := writeJSON(filepath.Join(c.Output, "data", "detail", slugify(id)+".json"), details[id]); e != nil {
-			return r, e
-		}
 	}
-	say("→ detail: %d shard(s)", len(details))
+	dp := rep.phase("writing detail shards", len(shards))
+	if e := inParallel(shards, func(id string) error {
+		defer dp.step()
+		return writeJSON(filepath.Join(c.Output, "data", "detail", slugify(id)+".json"), details[id])
+	}); e != nil {
+		return r, e
+	}
+	dp.finish("detail: %d shard(s)", len(shards))
 	head["tagTable"] = tagTable
 	head["catTable"] = catTable
 	registry := readRegistry(c.Source)
@@ -325,6 +373,7 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 		head["tagInfo"] = glossary
 		say("→ tags: %d of the library's %d tags carry a description", len(glossary), len(tagTable))
 	}
+	ip := rep.phase("writing the index", 0)
 	if e := writeJSON(filepath.Join(c.Output, "data", "search.json"), search); e != nil {
 		return r, e
 	}
@@ -348,18 +397,22 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 	head["pages"] = pages
 	head["total"] = len(indexes)
 	head["pageSize"] = ItemsPerPage
-	say("→ index: %d item(s) in %d page(s)", len(indexes), pages)
+	ip.add(len(indexes))
+	ip.finish("index: %d item(s) in %d page(s)", len(indexes), pages)
 	if e := writeJSON(filepath.Join(c.Output, "data", "index.json"), head); e != nil {
 		return r, e
 	}
+	fp := rep.phase("writing feeds", len(r.Authors)+1)
 	if e := writeFeeds(r.Items, r.Authors, c, now, claimed); e != nil {
 		return r, e
 	}
-	say("→ feeds: %d", len(r.Authors)+1)
+	fp.add(len(r.Authors) + 1)
+	fp.finish("feeds: %d", len(r.Authors)+1)
 	// Last, with everything written: the build owns these trees, and what it
 	// did not put there this time does not belong there. `data/index` is absent
 	// because it is rebuilt wholesale, and `data/words` because a shard name is
 	// a hash of the vocabulary rather than of anything the library declares.
+	pp := rep.phase("pruning", 0)
 	if c.Prune {
 		total := 0
 		for _, sub := range []string{"media", "data/detail", "feed", "transcripts"} {
@@ -369,8 +422,9 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 			}
 			total += gone
 		}
+		pp.add(total)
 		if total > 0 {
-			say("  pruned %d file(s) the library no longer claims", total)
+			pp.finish("pruned %d file(s) the library no longer claims", total)
 		}
 	}
 	if e := writeShell(c, o.Force, now); e != nil {
@@ -379,7 +433,11 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 	if e := writeManifest(filepath.Join(c.Output, "data"), now); e != nil {
 		return r, e
 	}
-	say("→ built %d items into %s (%d audio placed, %d tagged)", len(r.Items), c.Output, r.Copied, r.Tagged)
+	if e := stamp.save(); e != nil {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("could not keep the artwork stamps: %v", e))
+	}
+	say("→ built %d items into %s in %s (%d audio placed, %d tagged)",
+		len(r.Items), c.Output, short(time.Since(rep.start)), r.Copied, r.Tagged)
 	return r, nil
 }
 func truncate(s string, n int) string {
@@ -400,30 +458,65 @@ func writeWordIndex(root string, transcripts map[string]string) error {
 	if e := writeJSON(filepath.Join(root, "_ids.json"), ids); e != nil {
 		return e
 	}
+	// Tokenising ten thousand transcripts is the slowest thing a build does and
+	// none of it depends on anything else, so the corpus is cut into contiguous
+	// runs and each one indexed on its own core.
+	//
+	// Contiguous is the whole trick. Every posting list is a list of document
+	// numbers in ascending order, and merging the runs back in the order they
+	// were cut keeps it that way -- which is why the ranges are ranges rather
+	// than a work queue handing out documents as workers come free.
+	runs := chunks(ids, max(1, (len(ids)+runtime.NumCPU()-1)/max(1, runtime.NumCPU())))
+	partial := make([]map[string]map[string][]int, len(runs))
+	base := 0
+	offsets := make([]int, len(runs))
+	for i, run := range runs {
+		offsets[i] = base
+		base += len(run)
+	}
+	var wg sync.WaitGroup
+	for i, run := range runs {
+		wg.Add(1)
+		go func(i, from int, run []string) {
+			defer wg.Done()
+			out := map[string]map[string][]int{}
+			seen := map[string]bool{}
+			for k, id := range run {
+				clear(seen)
+				for _, word := range wordPattern.FindAllString(strings.ToLower(transcripts[id]), -1) {
+					if len(word) <= 2 || seen[word] {
+						continue
+					}
+					seen[word] = true
+					name := word[:2]
+					if strings.Contains(name, "'") {
+						name = "_other"
+					}
+					if out[name] == nil {
+						out[name] = map[string][]int{}
+					}
+					out[name][word] = append(out[name][word], from+k)
+				}
+			}
+			partial[i] = out
+		}(i, offsets[i], run)
+	}
+	wg.Wait()
 	shards := map[string]map[string][]int{}
-	for n, id := range ids {
-		seen := map[string]bool{}
-		for _, word := range wordPattern.FindAllString(strings.ToLower(transcripts[id]), -1) {
-			if len(word) <= 2 || seen[word] {
-				continue
-			}
-			seen[word] = true
-			name := word[:2]
-			if strings.Contains(name, "'") {
-				name = "_other"
-			}
+	for _, part := range partial {
+		for name, words := range part {
 			if shards[name] == nil {
 				shards[name] = map[string][]int{}
 			}
-			shards[name][word] = append(shards[name][word], n)
+			for word, hits := range words {
+				shards[name][word] = append(shards[name][word], hits...)
+			}
 		}
 	}
-	for _, name := range sortedKeys(shards) {
-		if e := writeJSON(filepath.Join(root, name+".json"), shards[name]); e != nil {
-			return e
-		}
-	}
-	return nil
+	names := sortedKeys(shards)
+	return inParallel(names, func(name string) error {
+		return writeJSON(filepath.Join(root, name+".json"), shards[name])
+	})
 }
 
 // readRegistry finds the tag registry: by name first, then by what a document

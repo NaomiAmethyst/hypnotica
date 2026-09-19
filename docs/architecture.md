@@ -29,6 +29,8 @@ location is chosen. To change it, update go.mod and the entry point's import.
    stored representation changes.
 9. Saved audio has an unversioned cache. Rebuilding must not clear downloads.
 10. An unchanged catalogue page should have an unchanged manifest hash.
+11. Importing a transfer file merges. It adds playlists, playlist entries and
+    favourites, and removes none of them. Ids the build does not know are kept.
 
 ## Dependencies
 

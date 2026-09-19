@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +50,30 @@ func jsonValue(t *testing.T, path string) any {
 	return v
 }
 
+// versionless strips the artwork stamp from anything the contract compares.
+//
+// The golden files came from the Python builder, which never versioned an
+// image URL. Adding the stamp is a deliberate divergence, not drift, and the
+// contract is here to catch drift -- so the query is normalised away and the
+// stamp itself is asserted separately, by TestArtworkURLsCarryAVersion.
+var stampQuery = regexp.MustCompile(`\?v=[0-9a-f]+`)
+
+func versionless(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			x[k] = versionless(e)
+		}
+	case []any:
+		for i, e := range x {
+			x[i] = versionless(e)
+		}
+	case string:
+		return stampQuery.ReplaceAllString(x, "")
+	}
+	return v
+}
+
 // The snapshots were produced by the Python builder, not this implementation.
 func TestPythonOutputContract(t *testing.T) {
 	c := fixtureConfig(t, "testdata/contracts", "link")
@@ -66,7 +91,7 @@ func TestPythonOutputContract(t *testing.T) {
 			actual := filepath.Join(c.Output, rel)
 			switch filepath.Ext(path) {
 			case ".json":
-				want, got := jsonValue(t, path), jsonValue(t, actual)
+				want, got := jsonValue(t, path), versionless(jsonValue(t, actual))
 				if filepath.ToSlash(rel) == "data/index.json" {
 					delete(got.(map[string]any)["site"].(map[string]any), "built")
 				}
@@ -77,6 +102,9 @@ func TestPythonOutputContract(t *testing.T) {
 				}
 			case ".xml":
 				want, got := xmlRecords(t, path), xmlRecords(t, actual)
+				for i := range got {
+					got[i] = stampQuery.ReplaceAllString(got[i], "")
+				}
 				if !reflect.DeepEqual(want, got) {
 					t.Errorf("feed differs\nwant %#v\ngot %#v", want, got)
 				}
@@ -230,4 +258,76 @@ func TestShellEscapesConfigAndFeedsCDATA(t *testing.T) {
 	feed := buildFeed([]*Item{i}, nil, c, c.Title, c.Description, "feed/all.xml", "", c.BaseURL, time.Now())
 	path := makeFile(t, t.TempDir(), "feed.xml", []byte(feed))
 	_ = xmlRecords(t, path)
+}
+
+// TestArtworkURLsCarryAVersion is the other half of the contract normalisation
+// above: the stamp is excluded from the Python comparison, so it has to be
+// asserted somewhere, and this is where.
+func TestArtworkURLsCarryAVersion(t *testing.T) {
+	c := fixtureConfig(t, "testdata/contracts", "link")
+	c.Cache = t.TempDir()
+	r := mustBuild(t, c)
+	var withCover *Item
+	for _, i := range r.Items {
+		if i.OutCover != "" {
+			withCover = i
+			break
+		}
+	}
+	if withCover == nil {
+		t.Skip("the fixture has no cover")
+	}
+	if !stampQuery.MatchString(withCover.OutCover) {
+		t.Fatalf("a cover URL with no version cannot refresh when it is redrawn: %q", withCover.OutCover)
+	}
+	// The file is served from the plain path; only the URL carries the stamp.
+	plain := stampQuery.ReplaceAllString(withCover.OutCover, "")
+	if _, e := os.Stat(filepath.Join(c.Output, filepath.FromSlash(plain))); e != nil {
+		t.Fatalf("nothing is served at %s: %v", plain, e)
+	}
+	before := withCover.OutCover
+
+	// Redraw it: same path, different bytes, and the URL must move.
+	src := withCover.CoverPath
+	old, e := os.ReadFile(src)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(src, old, 0644) })
+	if e = os.WriteFile(src, append(append([]byte{}, old...), []byte("<!-- redrawn -->")...), 0644); e != nil {
+		t.Fatal(e)
+	}
+	again := mustBuild(t, c)
+	for _, i := range again.Items {
+		if i.ID != withCover.ID {
+			continue
+		}
+		if i.OutCover == before {
+			t.Fatal("the cover changed and its URL did not; a browser would go on showing the old one")
+		}
+		if stampQuery.ReplaceAllString(i.OutCover, "") != plain {
+			t.Fatalf("the served path moved as well as the stamp: %q", i.OutCover)
+		}
+		return
+	}
+	t.Fatal("the item vanished from the second build")
+}
+
+// A picture that has not changed keeps its URL, so a rebuild does not throw
+// away every cached image for nothing.
+func TestAnUnchangedPictureKeepsItsURL(t *testing.T) {
+	c := fixtureConfig(t, "testdata/contracts", "link")
+	c.Cache = t.TempDir()
+	first := mustBuild(t, c)
+	second := mustBuild(t, c)
+	was := map[string]string{}
+	for _, i := range first.Items {
+		was[i.ID] = i.OutCover
+	}
+	for _, i := range second.Items {
+		if was[i.ID] != i.OutCover {
+			t.Fatalf("%s: URL moved without the picture changing: %q then %q",
+				i.ID, was[i.ID], i.OutCover)
+		}
+	}
 }

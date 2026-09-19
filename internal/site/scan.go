@@ -14,6 +14,9 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+	"runtime"
+	"sync"
+	"sync/atomic"
 )
 
 type Library struct {
@@ -103,63 +106,74 @@ func LoadDocuments(root string) Library {
 		return l
 	}
 	transcripts := map[string]object{}
-	for _, path := range files {
-		if filepath.Dir(path) == root && words("hypnotica.yaml hypnotica.yml tags.yaml tags.yml")[filepath.Base(path)] {
-			continue
-		}
-		rel, _ := filepath.Rel(root, path)
-		docs, e := readDocs(path)
-		if e != nil {
-			l.Errors = append(l.Errors, fmt.Sprintf("%s: invalid YAML - %v", rel, e))
-			continue
-		}
-		for n, doc := range docs {
-			if doc == nil {
+	// Parsing is the expensive half and the files know nothing about each other,
+	// so it runs across cores -- but in ordered chunks, folded in file order.
+	//
+	// Order is not cosmetic here: it decides which of two entries sharing an id
+	// is reported as the duplicate, and a build whose warnings move about
+	// between runs is a build nobody can diff. Chunking also bounds what is held
+	// at once, which matters because the transcripts in this tree are large
+	// enough that parsing all of them before folding any would cost gigabytes.
+	for _, chunk := range chunks(files, 256) {
+		parsed := parseAll(chunk)
+		for k, path := range chunk {
+			if filepath.Dir(path) == root && words("hypnotica.yaml hypnotica.yml tags.yaml tags.yml")[filepath.Base(path)] {
 				continue
 			}
-			entries, isList := doc.([]any)
-			if !isList {
-				entries = []any{doc}
+			rel, _ := filepath.Rel(root, path)
+			docs, e := parsed[k].docs, parsed[k].err
+			if e != nil {
+				l.Errors = append(l.Errors, fmt.Sprintf("%s: invalid YAML - %v", rel, e))
+				continue
 			}
-			for j, entry := range entries {
-				where := rel
-				if len(docs) > 1 || isList {
-					pos := n
-					if isList {
-						pos = j
-					}
-					where += fmt.Sprintf(" [doc %d]", pos+1)
-				}
-				d, ok := entry.(map[string]any)
-				if !ok {
-					l.Errors = append(l.Errors, where+": expected a mapping")
+			for n, doc := range docs {
+				if doc == nil {
 					continue
 				}
-				switch about(d) {
-				case "transcript":
-					id := strings.TrimSpace(str(d["item"]))
-					if id == "" {
-						l.Errors = append(l.Errors, where+": transcript names no item")
-					} else {
-						transcripts[id] = d
-					}
-					continue
-				case "config", "tags":
-					continue
+				entries, isList := doc.([]any)
+				if !isList {
+					entries = []any{doc}
 				}
-				if looksAuthor(d, path) {
-					a, e := newAuthor(d, path)
-					if e != nil {
-						l.Errors = append(l.Errors, where+": "+e.Error())
-					} else {
-						l.Authors = append(l.Authors, a)
+				for j, entry := range entries {
+					where := rel
+					if len(docs) > 1 || isList {
+						pos := n
+						if isList {
+							pos = j
+						}
+						where += fmt.Sprintf(" [doc %d]", pos+1)
 					}
-				} else {
-					i, e := newItem(d, path)
-					if e != nil {
-						l.Errors = append(l.Errors, where+": "+e.Error())
+					d, ok := entry.(map[string]any)
+					if !ok {
+						l.Errors = append(l.Errors, where+": expected a mapping")
+						continue
+					}
+					switch about(d) {
+					case "transcript":
+						id := strings.TrimSpace(str(d["item"]))
+						if id == "" {
+							l.Errors = append(l.Errors, where+": transcript names no item")
+						} else {
+							transcripts[id] = d
+						}
+						continue
+					case "config", "tags":
+						continue
+					}
+					if looksAuthor(d, path) {
+						a, e := newAuthor(d, path)
+						if e != nil {
+							l.Errors = append(l.Errors, where+": "+e.Error())
+						} else {
+							l.Authors = append(l.Authors, a)
+						}
 					} else {
-						l.Items = append(l.Items, i)
+						i, e := newItem(d, path)
+						if e != nil {
+							l.Errors = append(l.Errors, where+": "+e.Error())
+						} else {
+							l.Items = append(l.Items, i)
+						}
 					}
 				}
 			}
@@ -287,4 +301,46 @@ func legacyYAML(n *yaml.Node, seen map[*yaml.Node]bool) {
 		}
 		n.Content = content
 	}
+}
+
+// chunks slices a list into runs of at most n, preserving order.
+func chunks[T any](all []T, n int) [][]T {
+	out := [][]T{}
+	for i := 0; i < len(all); i += n {
+		out = append(out, all[i:min(i+n, len(all))])
+	}
+	return out
+}
+
+type parsedFile struct {
+	docs []any
+	err  error
+}
+
+// parseAll reads and decodes a batch of files at once, answering in the order
+// it was asked. Reading YAML is CPU-bound and the files are independent; the
+// fold that follows is not, and stays sequential.
+func parseAll(paths []string) []parsedFile {
+	out := make([]parsedFile, len(paths))
+	workers := min(runtime.NumCPU(), len(paths))
+	if workers < 1 {
+		return out
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(paths) {
+					return
+				}
+				out[i].docs, out[i].err = readDocs(paths[i])
+			}
+		}()
+	}
+	wg.Wait()
+	return out
 }

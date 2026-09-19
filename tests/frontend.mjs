@@ -213,6 +213,163 @@ await sleep(100);
 const after = JSON.parse(window.localStorage.getItem("hyp.playlists"))[0].items.length;
 ok("playlist item removal persists", after === before - 1, `${before} -> ${after}`);
 
+console.log("\n== favourites ==");
+const favs = () => JSON.parse(window.localStorage.getItem("hyp.favourites") || "{}");
+window.location.hash = "#/";
+await sleep(250);
+const firstCard = $(".card");
+const favId = firstCard.dataset.id;
+ok("every item chiclet carries a heart",
+   $$(".card button.heart").length === $$(".card").length,
+   `${$$('.card button.heart').length} hearts for ${$$('.card').length} cards`);
+ok("a heart starts empty",
+   firstCard.querySelector("button.heart").getAttribute("aria-pressed") === "false");
+click(firstCard.querySelector("button.heart"));
+await sleep(80);
+ok("pressing it fills the heart", firstCard.querySelector("button.heart").classList.contains("on"));
+ok("...and says so to a screen reader",
+   firstCard.querySelector("button.heart").getAttribute("aria-pressed") === "true");
+// Liking something from a grid must not rebuild the grid: the card the reader
+// pressed is still the same element, in the same place.
+ok("...without rebuilding the grid under the reader", $(".card") === firstCard);
+ok("the favourite is kept", Object.keys(favs().items || {}).includes(favId),
+   JSON.stringify(favs().items));
+
+window.location.hash = `#/item/${encodeURIComponent(favId)}`;
+await sleep(250);
+ok("the item page shows it as favourited", !!$("article .actions button.heart.on"));
+ok("...with the word beside the heart",
+   /Favourited/.test($("article .actions button.heart")?.textContent || ""),
+   $("article .actions button.heart")?.textContent);
+
+window.location.hash = "#/authors";
+await sleep(250);
+ok("every creator chiclet carries a heart",
+   $$('.card button.heart[data-what="author"]').length === $$(".card").length,
+   `${$$('.card button.heart[data-what=author]').length} hearts for ${$$('.card').length} cards`);
+const authorHeart = $('.card button.heart[data-what="author"]');
+const favAuthor = authorHeart.dataset.fid;
+click(authorHeart);
+await sleep(80);
+ok("a creator can be favourited", Object.keys(favs().authors || {}).includes(favAuthor));
+
+window.location.hash = `#/author/${encodeURIComponent(favAuthor)}`;
+await sleep(300);
+ok("the creator page shows it as favourited", !!$(".authorhead .actions button.heart.on"));
+click($(".authorhead .actions button.heart"));
+await sleep(80);
+ok("pressing again takes it off", !Object.keys(favs().authors || {}).includes(favAuthor));
+click($(".authorhead .actions button.heart"));
+await sleep(80);
+
+window.location.hash = "#/favourites";
+await sleep(300);
+ok("the page is in the top nav",
+   $$(".navlinks a").some(a => a.getAttribute("href") === "#/favourites"));
+ok("...and is marked as where we are",
+   $(".navlinks a.active")?.getAttribute("href") === "#/favourites");
+ok("it lists the favourited recording", $$(".card").some(c => c.dataset.id === favId));
+ok("...and the favourited creator",
+   $$('button.heart[data-what="author"]').some(b => b.dataset.fid === favAuthor));
+
+console.log("\n== import and export ==");
+const files = [];
+window.URL.createObjectURL = blob => { files.push(blob); return "blob:hypnotica-test"; };
+window.URL.revokeObjectURL = () => {};
+
+click($("#favExport"));
+await sleep(120);
+ok("exporting writes a file", files.length === 1, `${files.length} files`);
+const exported = JSON.parse(await files[0].text());
+ok("the file names the format it is in", exported.hypnotica === 1);
+ok("...and carries both kinds of favourite",
+   !!exported.favourites.items[favId] && !!exported.favourites.authors[favAuthor],
+   JSON.stringify(exported.favourites));
+ok("...with the time each was liked",
+   !Number.isNaN(Date.parse(exported.favourites.items[favId])),
+   exported.favourites.items[favId]);
+
+window.location.hash = "#/playlists";
+await sleep(250);
+click($("#plExportAll"));
+await sleep(120);
+ok("playlists export too", files.length === 2 && !!JSON.parse(await files[1].text()).playlists);
+
+// A file from another device: one playlist, naming an item this library does
+// not have, and one favourite that is new here.
+const other = index.items.slice(-3).map(i => i.id);
+const shared = {
+  hypnotica: 1,
+  exported: "2026-03-05T12:00:00.000Z",
+  playlists: [{ id: "pl-from-elsewhere", name: "From the other phone",
+                created: "2026-03-01T00:00:00.000Z", updated: "2026-03-05T00:00:00.000Z",
+                items: [other[0], other[1], "nothing-of-that-name"] }],
+  favourites: { items: { [other[2]]: "2026-02-02T02:02:02.000Z" }, authors: {} },
+};
+const lists = () => JSON.parse(window.localStorage.getItem("hyp.playlists") || "[]");
+const importText = async text => {
+  click($("#plImport"));
+  await sleep(80);
+  setVal($("#ioText"), text);
+  click($("#ioGo"));
+  await sleep(150);
+};
+const heldBefore = lists().length;
+await importText(JSON.stringify(shared));
+ok("the dialog closes on a good import", $("#ioDlg").open === false);
+const arrived = lists().find(p => p.id === "pl-from-elsewhere");
+ok("the shared playlist arrived", !!arrived && lists().length === heldBefore + 1,
+   `${heldBefore} -> ${lists().length}`);
+ok("...keeping an id this library has never heard of",
+   arrived?.items.includes("nothing-of-that-name"), JSON.stringify(arrived?.items));
+ok("...and the report says so", /not in this library/.test($(".toast")?.textContent || ""),
+   $(".toast")?.textContent);
+ok("the shared favourite arrived", Object.keys(favs().items || {}).includes(other[2]));
+ok("...dated when it was liked, not when it was imported",
+   favs().items[other[2]] === "2026-02-02T02:02:02.000Z", favs().items[other[2]]);
+
+// The same file again: an import is a merge, so doing it twice is doing it once.
+await importText(JSON.stringify(shared));
+ok("importing the same file twice changes nothing",
+   lists().length === heldBefore + 1
+   && lists().find(p => p.id === "pl-from-elsewhere").items.length === 3,
+   `${lists().length} playlists`);
+ok("...and says nothing new arrived", /Nothing new/.test($(".toast")?.textContent || ""),
+   $(".toast")?.textContent);
+
+// The other device added one entry and renamed it.
+const moved = JSON.parse(JSON.stringify(shared));
+moved.playlists[0].items.push(index.items[0].id);
+moved.playlists[0].name = "Renamed over there";
+moved.playlists[0].updated = "2026-04-01T00:00:00.000Z";
+await importText(JSON.stringify(moved));
+const merged = lists().find(p => p.id === "pl-from-elsewhere");
+ok("a playlist that gained an entry gains it here", merged.items.length === 4,
+   JSON.stringify(merged.items));
+ok("...and the newer name follows it", merged.name === "Renamed over there", merged.name);
+
+// Favourites already held are not disturbed by a file that knows less.
+const kept = Object.keys(favs().items).length;
+await importText(JSON.stringify({ hypnotica: 1, favourites: { items: {} }, playlists: [] }));
+ok("an import never removes a favourite", Object.keys(favs().items).length === kept);
+
+click($("#plImport"));
+await sleep(80);
+setVal($("#ioText"), "this is not a file");
+click($("#ioGo"));
+await sleep(120);
+ok("nonsense is refused", /not JSON/.test($(".toast")?.textContent || ""), $(".toast")?.textContent);
+ok("...and the dialog stays open to try again", $("#ioDlg").open === true);
+click($('#ioFoot [data-act="ioClose"]'));
+await sleep(60);
+ok("the dialog closes", $("#ioDlg").open === false);
+
+// One playlist on its own, the way somebody would paste it to a friend.
+const one = { name: "Just this one", items: [index.items[1].id] };
+await importText(JSON.stringify(one));
+ok("a single playlist pasted on its own is understood",
+   lists().some(p => p.name === "Just this one"), JSON.stringify(lists().map(p => p.name)));
+
 console.log("\n== offline ==");
 window.location.hash = "#/";
 await sleep(200);

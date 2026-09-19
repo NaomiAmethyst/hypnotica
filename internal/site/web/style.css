@@ -145,6 +145,24 @@ b.f-not{color:var(--mut);text-decoration:line-through}
   color:var(--mut)}
 .pill.ok{border-color:var(--accent);color:var(--accent)}
 
+/* ---------- the heart ---------- */
+/* Quiet until it means something: an unliked heart is an outline in the muted
+   text colour, a liked one is filled and in the accent. Both are the same size,
+   so nothing on the card moves when it is pressed. */
+.heart{background:none;border:none;padding:2px 4px;line-height:1;color:var(--mut);
+  border-radius:8px;display:inline-flex;align-items:center;gap:7px;
+  font-size:1.05rem;margin-left:auto}
+.heart .gl{font-size:1.15em;line-height:1;width:1.05em;text-align:center}
+.heart:hover,.heart:focus-visible{color:var(--accent)}
+.heart.on{color:var(--accent)}
+.cardacts .heart{flex:none}
+/* Beside its word, it is an ordinary button in a row of them and lines up
+   with them rather than floating to the end. */
+.btn.heart{margin-left:0;font-size:inherit;color:var(--fg);
+  border:1px solid var(--line);background:var(--card);padding:9px 14px}
+.btn.heart:hover{border-color:var(--accent);color:var(--accent)}
+.btn.heart.on{border-color:var(--accent);color:var(--accent)}
+
 /* ---------- item page ---------- */
 article{max-width:820px;margin:0 auto}
 .back{display:inline-block;margin:14px 0;text-decoration:none;color:var(--mut)}
@@ -272,6 +290,13 @@ dialog .dh{padding:15px 18px 0;font-weight:600}
 dialog .db{padding:14px 18px}
 dialog .df{padding:0 18px 16px;display:flex;gap:8px;justify-content:flex-end}
 dialog ol.list{max-height:46vh;overflow:auto;margin:0}
+/* The import and export box: a file picker, or the text of one. Monospace,
+   because what goes in it is JSON somebody may have to look at. */
+dialog textarea{width:100%;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  resize:vertical}
+dialog input[type=file]{width:100%;background:var(--bg)}
+dialog .db .note{margin:0 0 10px}
+dialog .db .note + .note{margin-top:12px}
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);
   bottom:calc(160px + env(safe-area-inset-bottom));z-index:60;background:var(--fg);
@@ -379,6 +404,29 @@ pre.prompt{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;
 .band i{font-style:normal;color:var(--mut);font-size:.85rem}
 .measured .disputed{border-left:3px solid var(--accent);padding-left:11px;
   margin-top:12px}
+
+/* A transcript with no timestamps -- one the creator supplied rather than one a
+   model produced. Prose, so set as prose: <pre> turned five-hundred-character
+   paragraphs into a sideways-scrolling wall. */
+.plain{max-width:68ch}
+.plain p{margin:0 0 .85em;line-height:1.65}
+
+/* ---- what a recording sounds like -------------------------------------- */
+/* Open by default when there is no speech, because then it is the description
+   rather than a note about one. */
+.snd{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:14px 0;
+  background:var(--card)}
+.snd > summary{cursor:pointer;font-weight:600}
+.snd > summary .cnt{margin-left:8px;font-size:.72rem;font-weight:600;padding:2px 8px;
+  border-radius:999px;border:1px solid var(--accent);color:var(--accent);
+  letter-spacing:.03em;text-transform:uppercase}
+.snd .reads{font-variant-numeric:tabular-nums;margin:10px 0 2px;font-size:.95rem}
+.sndrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;margin:12px 0 2px}
+.sndrow b{font-weight:600;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--mut);margin-right:4px;cursor:help;text-decoration:underline dotted;
+  text-underline-offset:3px}
+.sndrow .chip{font-size:.78rem;padding:3px 9px;border-radius:999px;cursor:help;
+  border:1px solid var(--line);color:var(--mut)}
 
 /* The other cuts of a recording, and the rest of its series. Both are lists of
    siblings rather than cards: the reader is already looking at one of them, so

@@ -197,6 +197,54 @@ Catalogue tags/categories are integer offsets into the head's tables. Detail
 shards carry descriptions, source URLs, transcript sources, measurements, video
 paths, prompts, and provenance. RSS GUIDs remain `hypnotica:<author>:<item-id>`.
 
+## Browser storage and transfer files
+
+The site keeps what a reader does in their own browser. Nothing is sent anywhere.
+
+| Key | Contents |
+| --- | --- |
+| `hyp.playlists` | Playlists: `id`, `name`, `items`, `created`, `updated` |
+| `hyp.favourites` | `{items, authors}`, each an id-to-time mapping |
+| `hyp.queue`, `hyp.positions`, `hyp.rate` | Play queue, resume positions, speed |
+| `hyp.filters`, `hyp.dlqueue` | Library filters and the download queue |
+| `hypnotica-audio-v1` | Cache Storage for saved audio; unversioned |
+| `hypnotica` | IndexedDB catalogue pages, versioned by CATALOG_SCHEMA |
+
+Playlists and favourites export to a JSON file and import back on the same
+device or another one. Times are ISO 8601; a number of milliseconds is also
+accepted when reading.
+
+```json
+{
+  "hypnotica": 1,
+  "exported": "2026-03-05T12:00:00.000Z",
+  "site": "Hypnotica",
+  "playlists": [
+    {"id": "plabc123", "name": "Sleep", "created": "2026-03-01T00:00:00.000Z",
+     "updated": "2026-03-05T00:00:00.000Z", "items": ["a-walk-in-the-woods"]}
+  ],
+  "favourites": {
+    "items": {"a-walk-in-the-woods": "2026-03-04T22:10:00.000Z"},
+    "authors": {"example": "2026-03-04T22:11:00.000Z"}
+  }
+}
+```
+
+Either top-level section may be absent. A bare list of playlists, or a single
+playlist object, reads the same way, so one entry copied out of a file works.
+Favourites also accept a plain list of ids. A file declaring a `hypnotica`
+version newer than this build is refused rather than half-read.
+
+An import merges and never removes:
+
+- A playlist whose `id` is already here gains the entries it is missing, keeps
+  the ones it has, and takes the file's name only when the file's `updated` is
+  newer. Otherwise it arrives as a new playlist under its own id.
+- Favourites join the ones already held, keeping the earlier of the two times.
+- Item and author ids the build does not know are kept, not dropped, and the
+  import reports how many there were. A library that later gains them shows
+  them without another import.
+
 ## Migration from Python
 
 The executable replaces the Python CLI. YAML, asset naming, RSS GUIDs,

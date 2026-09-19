@@ -133,14 +133,16 @@ func writeFeeds(items []*Item, authors map[string]*Author, c Config, now time.Ti
 	for _, i := range items {
 		groups[i.Author] = append(groups[i.Author], i)
 	}
-	for _, id := range sortedKeys(groups) {
+	ids := sortedKeys(groups)
+	// `claimed` is shared with the prune pass, so it is filled here where there
+	// is one goroutine; only the building and writing fan out.
+	for _, id := range ids {
+		claimed["feed/"+id+".xml"] = true
+	}
+	return inParallel(ids, func(id string) error {
 		a := authors[id]
 		path := "feed/" + id + ".xml"
-		claimed[path] = true
-		feed = buildFeed(groups[id], a, c, a.Name, str(first(a.Description, "Audio by "+a.Name+".")), path, str(first(a.OutImage, c.Icon)), str(first(a.URL, c.BaseURL+"/#/author/"+id)), now)
-		if e := writeFile(filepath.Join(c.Output, path), []byte(feed)); e != nil {
-			return e
-		}
-	}
-	return nil
+		body := buildFeed(groups[id], a, c, a.Name, str(first(a.Description, "Audio by "+a.Name+".")), path, str(first(a.OutImage, c.Icon)), str(first(a.URL, c.BaseURL+"/#/author/"+id)), now)
+		return writeFile(filepath.Join(c.Output, path), []byte(body))
+	})
 }

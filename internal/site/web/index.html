@@ -23,6 +23,7 @@
     <nav class="navlinks">
       <a href="#/">Library</a>
       <a href="#/authors">Authors</a>
+      <a href="#/favourites">Favourites</a>
       <a href="#/playlists">Playlists</a>
       <a href="#/queue">Queue</a>
       <a href="#/offline">Offline</a>
@@ -60,6 +61,12 @@
   <div class="dh">Add to playlist</div>
   <div class="db" id="plDlgBody"></div>
   <div class="df"><button class="btn" onclick="this.closest('dialog').close()">Close</button></div>
+</dialog>
+
+<dialog id="ioDlg">
+  <div class="dh" id="ioTitle">Import</div>
+  <div class="db" id="ioBody"></div>
+  <div class="df" id="ioFoot"></div>
 </dialog>
 
 <script src="app.js?v=__BUILD_ID__"></script>

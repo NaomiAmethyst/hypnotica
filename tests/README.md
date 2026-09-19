@@ -27,7 +27,7 @@ requires reviewing the compatibility contract.
 
 | File | Checks |
 | --- | --- |
-| `frontend.mjs` | Search, rendering, player, playlists, offline, provenance, video, measurements |
+| `frontend.mjs` | Search, rendering, player, playlists, favourites, import/export, offline, provenance, video, measurements |
 | `catalog.mjs` | IndexedDB reuse, page hashes, schema changes, offline upgrade failure |
 | `scroll.mjs` | Navigation restoration, filtering, facet panel scrolling |
 | `queue.mjs` | Auto-advance, resume, stale queue items, failed playback |

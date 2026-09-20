@@ -127,6 +127,7 @@ async function app({ positions, queue, broken = new Set(), tick = TICK, dur = DU
     click: el => el && el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })),
     title: () => $("#pTitle").textContent,
     state: () => JSON.parse(window.localStorage.getItem("hyp.queue") || "null"),
+    store: k => JSON.parse(window.localStorage.getItem(k) || "null"),
     // build a queue without playing it, then start from the top
     async queueUp(ids) {
       for (const id of ids) {
@@ -222,6 +223,56 @@ console.log("\n== resume position ==");
   }
   ok("a genuine mid-track position is still resumed", first !== null && first >= 12,
      `started at ${first}`);
+}
+
+/* Playing something is what writes a history, so it is tested where playback is
+   modelled properly: a track that really reaches `ended` after a known number of
+   virtual seconds. */
+console.log("\n== what was played ==");
+{
+  const h = await app();
+  await h.queueUp([A.id]);
+  await waitFor(() => h.played.length === 1);
+  await waitFor(() => (h.store("hyp.history")?.recent || []).length === 1);
+  const hist = h.store("hyp.history") || {};
+  const rec = (hist.recent || [])[0] || {};
+  ok("a finished track becomes one sitting", (hist.recent || []).length === 1,
+     JSON.stringify(hist.recent));
+  ok("...filed against what was played", rec.i === A.id, rec.i);
+  ok("...marked as finished", rec.c === true, JSON.stringify(rec));
+  ok("...with the seconds actually heard", rec.s >= DUR - 3 && rec.s <= DUR, String(rec.s));
+  const counts = Object.values(hist.plays?.[A.id]?.c || {});
+  ok("...and counted once", counts.length === 1 && counts[0].n === 1, JSON.stringify(counts));
+  ok("the title is kept beside the id", h.store("hyp.names")?.[A.id]?.t === A.title,
+     JSON.stringify(h.store("hyp.names")?.[A.id]));
+}
+
+console.log("\n== a sitting too short to count ==");
+{
+  const h = await app({ dur: 12 });
+  await h.queueUp([B.id]);
+  await waitFor(() => h.played.length === 1);
+  await sleep(12 * TICK + 300);
+  ok("a recording given up on early leaves no trace",
+     (h.store("hyp.history")?.recent || []).length === 0,
+     JSON.stringify(h.store("hyp.history")?.recent));
+}
+
+console.log("\n== recording paused ==");
+{
+  const h = await app();
+  h.window.location.hash = "#/history";
+  await sleep(150);
+  h.click(h.$("#histPause"));
+  await sleep(80);
+  ok("the control says it is paused", /Resume/.test(h.$("#histPause")?.textContent || ""),
+     h.$("#histPause")?.textContent);
+  await h.queueUp([A.id]);
+  await waitFor(() => h.played.length === 1);
+  await sleep(DUR * TICK + 300);
+  ok("...and nothing is kept while it is",
+     (h.store("hyp.history")?.recent || []).length === 0,
+     JSON.stringify(h.store("hyp.history")?.recent));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

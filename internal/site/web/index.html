@@ -20,16 +20,20 @@
 <header class="top">
   <div class="topbar">
     <a class="brand" href="#/"><span class="dot"></span><span id="brandName">__TITLE__</span></a>
-    <nav class="navlinks">
-      <a href="#/">Library</a>
-      <a href="#/authors">Authors</a>
-      <a href="#/favourites">Favourites</a>
-      <a href="#/playlists">Playlists</a>
-      <a href="#/queue">Queue</a>
-      <a href="#/offline">Offline</a>
-      <a id="feedAll" href="feed/all.xml">RSS</a>
-    </nav>
-    <span class="netbadge" id="net">online</span>
+    <div class="bars" id="navMenu">
+      <button class="barsbtn" id="navToggle" type="button" aria-label="Menu" title="Menu"
+        aria-expanded="false" aria-controls="navLinks"><span class="burger"></span></button>
+      <nav class="navlinks" id="navLinks">
+        <a href="#/">Library</a>
+        <a href="#/authors">Authors</a>
+        <a href="#/queue">Queue</a>
+        <a id="feedAll" href="feed/all.xml">RSS</a>
+      </nav>
+    </div>
+    <details class="me" id="meMenu">
+      <summary aria-label="You"><span class="medot"></span><span id="meName">You</span></summary>
+      <div class="mebody" id="meBody"></div>
+    </details>
   </div>
 </header>
 

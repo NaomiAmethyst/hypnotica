@@ -134,3 +134,29 @@ func TestGeneratedRequiresListAndSeriesRequiresInteger(t *testing.T) {
 		t.Fatalf("unexpected normalization: %+v", i)
 	}
 }
+
+// The name a recording arrived under is shown only where the library replaced
+// it with one of its own. Trimming a suffix also records an `original_title`,
+// and on a real library that is five times as many entries as were actually
+// renamed -- so the flag that matters is whether the title is the machine's.
+func TestTheOriginalNameIsShownOnlyWhereTheLibraryRenamedIt(t *testing.T) {
+	for _, c := range []struct {
+		why    string
+		item   Item
+		expect string
+	}{
+		{"renamed by the review", Item{Title: "Obedience and Orgasm Denial",
+			OriginalTitle: "Domination3", Generated: []string{"title", "summary"}},
+			"Domination3"},
+		{"only tidied, not renamed", Item{Title: "Math is hard",
+			OriginalTitle: "Math is hard (SFW)", Generated: []string{"summary"}}, ""},
+		{"renamed, but only the spacing changed", Item{Title: "Deep Water",
+			OriginalTitle: "  deep   water ", Generated: []string{"title"}}, ""},
+		{"never renamed at all", Item{Title: "Sleepytime Trance",
+			Generated: []string{"summary"}}, ""},
+	} {
+		if got := c.item.originalTitle(); got != c.expect {
+			t.Errorf("%s: got %q, want %q", c.why, got, c.expect)
+		}
+	}
+}

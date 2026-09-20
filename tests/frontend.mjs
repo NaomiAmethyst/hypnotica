@@ -264,10 +264,15 @@ await sleep(80);
 
 window.location.hash = "#/favourites";
 await sleep(300);
-ok("the page is in the top nav",
-   $$(".navlinks a").some(a => a.getAttribute("href") === "#/favourites"));
+ok("the page is in the menu of one's own things",
+   $$("#meBody a").some(a => a.getAttribute("href") === "#/favourites"),
+   $$("#meBody a").map(a => a.getAttribute("href")).join(","));
 ok("...and is marked as where we are",
-   $(".navlinks a.active")?.getAttribute("href") === "#/favourites");
+   $("#meBody a.active")?.getAttribute("href") === "#/favourites",
+   $("#meBody a.active")?.getAttribute("href") || "none");
+ok("...with the bar itself left to the library",
+   $$(".navlinks a").map(a => a.getAttribute("href")).join(",") === "#/,#/authors,#/queue,feed/all.xml",
+   $$(".navlinks a").map(a => a.getAttribute("href")).join(","));
 ok("it lists the favourited recording", $$(".card").some(c => c.dataset.id === favId));
 ok("...and the favourited creator",
    $$('button.heart[data-what="author"]').some(b => b.dataset.fid === favAuthor));
@@ -609,6 +614,189 @@ console.log("\n== write-ups ==");
   const styled = texts.filter(t => /<[a-z][^>]*\s(class|style|onclick|onerror)\s*=/i.test(t));
   ok("...and none carries another site's markup", styled.length === 0,
      styled[0]?.slice(0, 120));
+}
+
+/* A deletion has to be a record of its own. Without one a merge cannot tell a
+   device that never had something from one that had it and let it go, and the
+   next file hands it straight back. */
+console.log("\n== removals are recorded ==");
+const names = () => JSON.parse(window.localStorage.getItem("hyp.names") || "{}");
+const notes = () => JSON.parse(window.localStorage.getItem("hyp.notes") || "{}");
+const lists2 = () => JSON.parse(window.localStorage.getItem("hyp.playlists") || "[]");
+const imp = async text => {
+  window.location.hash = "#/playlists";
+  await sleep(220);
+  await importText(text);
+};
+{
+  window.location.hash = `#/item/${encodeURIComponent(favId)}`;
+  await sleep(250);
+  const heart = $("article .actions button.heart");
+  ok("the recording is still favourited", !!heart && heart.classList.contains("on"));
+  click(heart);
+  await sleep(100);
+  ok("unliking takes it out", !Object.keys(favs().items || {}).includes(favId));
+  ok("...and records that it went", !!(favs().removed?.items || {})[favId],
+     JSON.stringify(favs().removed));
+
+  await imp(JSON.stringify({ hypnotica: 1,
+    favourites: { items: { [favId]: "2020-01-01T00:00:00.000Z" }, authors: {} } }));
+  ok("a file written before the removal does not hand it back",
+     !Object.keys(favs().items || {}).includes(favId), JSON.stringify(favs().items));
+
+  const later = new Date(Date.now() + 60000).toISOString();
+  await imp(JSON.stringify({ hypnotica: 1,
+    favourites: { items: { [favId]: later }, authors: {} } }));
+  ok("...but one written after it is somebody liking it again",
+     Object.keys(favs().items || {}).includes(favId));
+
+  const held = lists2()[0];
+  const dropped = Object.keys(held.removed || {});
+  ok("an entry taken out of a playlist is remembered", dropped.length === 1,
+     JSON.stringify(held.removed));
+  await imp(JSON.stringify({ hypnotica: 1, playlists: [{ id: held.id, name: held.name,
+    updated: "2020-01-01T00:00:00.000Z", items: [dropped[0]] }] }));
+  ok("...and an older file does not put it back",
+     !lists2()[0].items.includes(dropped[0]), JSON.stringify(lists2()[0].items));
+
+  const doomed = lists2()[0];
+  window.location.hash = `#/playlist/${doomed.id}`;
+  await sleep(220);
+  click($('[data-act="plDel"]'));
+  await sleep(150);
+  ok("a deleted playlist is gone", !lists2().some(p => p.id === doomed.id));
+  ok("...and remembered as deleted",
+     !!JSON.parse(window.localStorage.getItem("hyp.playlists.gone") || "{}")[doomed.id]);
+  await imp(JSON.stringify({ hypnotica: 1, playlists: [{ id: doomed.id, name: doomed.name,
+    updated: "2020-01-01T00:00:00.000Z", items: doomed.items }] }));
+  ok("...so a file that still has it does not bring it back",
+     !lists2().some(p => p.id === doomed.id), JSON.stringify(lists2().map(p => p.id)));
+}
+
+console.log("\n== notes ==");
+{
+  window.location.hash = `#/item/${encodeURIComponent(favId)}`;
+  await sleep(250);
+  ok("every recording has a note box", !!$("#noteText"));
+  setVal($("#noteText"), "Good for sleep.");
+  click($('[data-act="noteSave"]'));
+  await sleep(150);
+  ok("a note is kept", notes()[favId]?.text === "Good for sleep.",
+     JSON.stringify(notes()[favId]));
+  ok("...with the title kept beside the id", !!names()[favId]?.t, JSON.stringify(names()[favId]));
+
+  window.location.hash = "#/notes";
+  await sleep(220);
+  ok("the notes page lists it", /Good for sleep/.test($("main")?.textContent || ""));
+  ok("...and is in the menu",
+     $$("#meBody a").some(a => a.getAttribute("href") === "#/notes"),
+     $$("#meBody a").map(a => a.getAttribute("href")).join(","));
+
+  // Newer text wins, and the text it displaced is kept rather than dropped.
+  const ahead = new Date(Date.now() + 120000).toISOString();
+  await imp(JSON.stringify({ hypnotica: 1,
+    notes: { [favId]: { text: "From the other phone.", updated: ahead } } }));
+  ok("a newer note replaces an older one", notes()[favId]?.text === "From the other phone.",
+     JSON.stringify(notes()[favId]));
+  ok("...and what it displaced is kept", notes()[favId]?.was?.text === "Good for sleep.",
+     JSON.stringify(notes()[favId]?.was));
+
+  window.location.hash = `#/item/${encodeURIComponent(favId)}`;
+  await sleep(250);
+  ok("the item says so", /replaced by one that arrived/.test($(".note-box")?.textContent || ""));
+  click($('[data-act="noteRestore"]'));
+  await sleep(150);
+  ok("...and the older text can be taken back", notes()[favId]?.text === "Good for sleep.",
+     JSON.stringify(notes()[favId]));
+}
+
+console.log("\n== what an export carries ==");
+{
+  const took = () => JSON.parse(window.localStorage.getItem("hyp.notes") || "{}");
+  window.location.hash = "#/notes";
+  await sleep(220);
+  click($("#noteExport"));
+  await sleep(120);
+  ok("the export dialog offers one tick per record",
+     $$("#ioBody input[data-sec]").length === 4,
+     `${$$("#ioBody input[data-sec]").length}`);
+  ok("...with notes asked for, since that is where we pressed it",
+     $('#ioBody input[data-sec="notes"]')?.checked === true);
+  ok("...and history left out unless it is asked for",
+     $('#ioBody input[data-sec="history"]')?.checked === false);
+  click($("#ioExportGo"));
+  await sleep(200);
+  const file = JSON.parse(await files[files.length - 1].text());
+  ok("the file carries the note", file.notes?.[favId]?.text === "Good for sleep.",
+     JSON.stringify(file.notes));
+  ok("...and the names of what it mentions", !!file.names?.[favId]?.t);
+  ok("...and no history, which was not ticked", !file.history);
+
+  // Private is private, whatever is ticked.
+  window.location.hash = `#/item/${encodeURIComponent(favId)}`;
+  await sleep(250);
+  $("#notePriv").checked = true;
+  click($('[data-act="noteSave"]'));
+  await sleep(150);
+  ok("a note can be marked private", took()[favId]?.private === true,
+     JSON.stringify(took()[favId]));
+  window.location.hash = "#/notes";
+  await sleep(220);
+  click($("#noteExport"));
+  await sleep(120);
+  click($("#ioExportGo"));
+  await sleep(200);
+  const second = JSON.parse(await files[files.length - 1].text());
+  ok("...and then leaves in nothing", !second.notes?.[favId],
+     JSON.stringify(second.notes));
+}
+
+/* The corner of the header: one menu for the library, one for the person, and
+   the network state folded into the second rather than sitting beside them. */
+console.log("\n== the corner ==");
+{
+  ok("the bar's links are folded into one wrapper, not copied into two",
+     $$("#navMenu .navlinks a").length === 4 && $$(".navlinks a").length === 4,
+     `${$$("#navMenu .navlinks a").length} in the menu, ${$$(".navlinks a").length} in all`);
+  ok("...with a button to open it where the bar is too narrow",
+     !!$("#navToggle .burger"));
+  // The links are laid along the bar by CSS and are in the document either way:
+  // a closed <details> would have taken them out of it, which is the bug this
+  // shape exists to avoid.
+  ok("...and the links are in the page whether or not the button has been pressed",
+     !$("#navMenu").classList.contains("open") && $$("#navLinks a").length === 4);
+  click($("#navToggle"));
+  await sleep(60);
+  ok("pressing it opens the menu", $("#navMenu").classList.contains("open") &&
+     $("#navToggle").getAttribute("aria-expanded") === "true");
+  click($$("#navLinks a")[1]);
+  await sleep(60);
+  ok("...and choosing something closes it again",
+     !$("#navMenu").classList.contains("open") &&
+     $("#navToggle").getAttribute("aria-expanded") === "false");
+  window.location.hash = "#/";
+  await sleep(150);
+  ok("no badge is left in the bar", !$(".netbadge"));
+  ok("the You button starts unmarked", !$("#meMenu")?.classList.contains("off"));
+
+  Object.defineProperty(window.navigator, "onLine", { value: false, configurable: true });
+  window.dispatchEvent(new window.Event("offline"));
+  await sleep(150);
+  ok("losing the network marks the You button", !!$("#meMenu")?.classList.contains("off"));
+  ok("...and says so to a screen reader",
+     /offline/i.test($("#meMenu summary")?.getAttribute("aria-label") || ""),
+     $("#meMenu summary")?.getAttribute("aria-label"));
+  // Asserted on the notice itself: the menu also carries a link to the Offline
+  // page, which is about downloads and says nothing about the network.
+  ok("...and writes it out, rather than leaving it to a colour",
+     /No network/.test($("#meBody .nonet")?.textContent || ""),
+     ($("#meBody")?.textContent || "").slice(0, 60));
+
+  Object.defineProperty(window.navigator, "onLine", { value: true, configurable: true });
+  window.dispatchEvent(new window.Event("online"));
+  await sleep(150);
+  ok("...and it clears when the network comes back",
+     !$("#meMenu")?.classList.contains("off") && !$("#meBody .nonet"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

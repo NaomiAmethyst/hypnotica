@@ -16,7 +16,7 @@ const ok = (n, c, e = "") => { c ? (pass++, console.log("  ok   " + n))
                                  : (fail++, console.log("  FAIL " + n + " " + e)); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function app(filters) {
+async function app(filters, store) {
   const vc = new VirtualConsole();
   vc.on("jsdomError", e => { if (!/Not implemented/.test(e.message)) console.log("  [jsdom]", e.message); });
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, "index.html"), "utf8"),
@@ -39,6 +39,11 @@ async function app(filters) {
   window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   if (filters) window.localStorage.setItem("hyp.filters", JSON.stringify(filters));
+  // What the reader has done, seeded before the app reads it: the modules cache
+  // on first read, so this has to be in place before app.js runs at all.
+  for (const [k, v] of Object.entries(store || {})) {
+    window.localStorage.setItem(k, JSON.stringify(v));
+  }
   window.eval(fs.readFileSync(path.join(ROOT, "app.js"), "utf8"));
   await sleep(250);
 
@@ -243,6 +248,71 @@ console.log("\n== duration ==");
   const h = await app();
   ok("a derived Duration: tag is never offered as a facet",
      !h.$$('[data-act="facet"]').some(b => /^Duration:/.test(b.dataset.v)));
+}
+
+/* The Library facet: played, noted, liked, listed. None of it is in the build,
+   so the fixture is seeded rather than tagged.
+     voxa-1  liked, and written against      voxa-3  in a playlist
+     voxa-2  liked                           nyx-4   played twice                */
+console.log("\n== what you have done with it ==");
+const WHEN = "2026-03-01T00:00:00.000Z";
+const DID = {
+  "hyp.favourites": { items: { "voxa-1": WHEN, "voxa-2": WHEN }, authors: {} },
+  "hyp.notes": { "voxa-1": { text: "Worth keeping.", updated: WHEN } },
+  "hyp.playlists": [{ id: "plfix", name: "Fixture list", items: ["voxa-3"],
+                      created: 1, updated: 1 }],
+  "hyp.history": { recent: [{ i: "nyx-4", t: WHEN, s: 600, c: true, d: "devfix" }],
+                   plays: { "nyx-4": { f: WHEN, l: WHEN, c: { devfix: { n: 2, e: 0 } } } } },
+};
+{
+  const h = await app(null, DID);
+  ok("the panel is offered, after the ones about the recording",
+     h.panels().at(-1) === "meta", h.panels().join(","));
+
+  await h.set("meta", "favourite", "any");
+  ok("any:[favourite] -> what has been liked", ids(h.titles()) === "voxa-1,voxa-2",
+     ids(h.titles()));
+  await h.set("meta", "note", "all");
+  await h.set("meta", "favourite", "all");
+  ok("all:[favourite,note] -> only the one that is both", ids(h.titles()) === "voxa-1",
+     ids(h.titles()));
+
+  await h.set("meta", "favourite", "");
+  await h.set("meta", "note", "");
+  await h.set("meta", "played", "not");
+  ok("not:[played] -> everything not listened to yet",
+     ids(h.titles()) === "voxa-1,voxa-2,voxa-3", ids(h.titles()));
+
+  await h.set("meta", "played", "");
+  await h.set("meta", "playlist", "any");
+  ok("any:[in a playlist] -> the one in a list", ids(h.titles()) === "voxa-3", ids(h.titles()));
+}
+{
+  const h = await app(null, DID);
+  h.openAll();
+  const count = v => h.$$('[data-act="facet"]')
+    .find(b => b.dataset.key === "meta" && b.dataset.v === v)?.querySelector("i")?.textContent;
+  ok("each chip counts what it would match", count("played") === "1" && count("favourite") === "2",
+     `played=${count("played")} favourite=${count("favourite")}`);
+  await h.set("meta", "favourite", "any");
+  ok("...and the choice is remembered", h.saved().meta?.any.join() === "favourite",
+     JSON.stringify(h.saved().meta));
+}
+{
+  // A filter saved by an earlier visit has to survive being read back, which is
+  // where a facet stored under a key the build did not have would come apart.
+  const h = await app({ meta: { any: ["playlist"], all: [], not: [] } }, DID);
+  ok("a Library facet kept from a previous visit still applies",
+     ids(h.titles()) === "voxa-3", ids(h.titles()));
+}
+{
+  // The facet has to work on a library nobody has touched yet: every chip is
+  // empty, and choosing one is a way of finding out there is nothing.
+  const h = await app();
+  h.openAll();
+  ok("with nothing done, the panel is still there", h.panels().includes("meta"));
+  await h.set("meta", "played", "any");
+  ok("...and asking for played gives nothing rather than everything", h.n() === 0, `${h.n()}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

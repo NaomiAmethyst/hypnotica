@@ -20,14 +20,18 @@ type object = map[string]any
 
 // Item is the normalized content record. Output paths are assigned by Build.
 type Item struct {
-	ID, Title, Author                                             string
-	Date                                                          *time.Time
-	Audio, Video, Cover, SourcePath                               string
-	Duration                                                      float64
-	Tags, Categories, AlsoTitled, Generated                       []string
-	Series                                                        any
-	SeriesIndex                                                   any
-	Summary, Description, Transcript, TranscriptSource, SourceURL string
+	ID, Title, Author                                                               string
+	Date                                                                            *time.Time
+	Audio, Video, Cover, SourcePath                                                 string
+	Duration                                                                        float64
+	Tags, Categories, AlsoTitled, Generated                                         []string
+	Series                                                                          any
+	SeriesIndex                                                                     any
+	Summary, Description, Synopsis, Script, Transcript, TranscriptSource, SourceURL string
+	// What the recording was called before the library renamed it, kept only
+	// where a rename actually happened. A title nobody could read is replaced
+	// so the entry can be found; the original still says what arrived with it.
+	OriginalTitle                                                 string
 	Segments                                                      any
 	Acoustic                                                      object
 	Sound                                                         object
@@ -285,6 +289,8 @@ func newItem(d object, path string) (*Item, error) {
 		Generated:        generated(d),
 		Summary:          str(d["summary"]),
 		Description:      Clean(str(d["description"])),
+		Synopsis:         Clean(str(d["synopsis"])),
+		Script:           str(d["script"]),
 		Transcript:       str(d["transcript"]),
 		TranscriptSource: str(d["transcript_source"]),
 		SourceURL:        str(first(d["source_url"], d["url"])),
@@ -294,6 +300,7 @@ func newItem(d object, path string) (*Item, error) {
 		Spoilers:         spoilers(d["spoilers"]),
 		CoverPrompts:     prompts(d["cover_prompts"]),
 		Provenance:       mapping(d["provenance"]),
+		OriginalTitle:    str(mapping(d["provenance"])["original_title"]),
 		Explicit:         boolean(d["explicit"], true),
 		Variant:          d["variant"],
 		SourcePath:       path,
@@ -382,10 +389,38 @@ func (i *Item) index() object {
 	}
 	return out
 }
+
+// originalTitle is the name this recording arrived under, shown only where the
+// library has given it a different one of its own.
+//
+// Gated on the title being marked generated, which is a narrower thing than
+// `original_title` existing. Trimming "(SFW)" off the end, or a site name, or a
+// duplicate marker, also records what was there before -- and on this library
+// that is 1,899 entries against 348 that were actually renamed. "Filed under
+// 'Math is hard (SFW)' when it arrived" is noise; "filed under 'Domination3'"
+// is the whole point, because that is the name somebody else's catalogue still
+// uses for it.
+func (i *Item) originalTitle() string {
+	was := strings.TrimSpace(i.OriginalTitle)
+	named := false
+	for _, g := range i.Generated {
+		named = named || g == "title"
+	}
+	if !named || was == "" || strings.EqualFold(collapse(was), collapse(i.Title)) {
+		return ""
+	}
+	return was
+}
+
+func collapse(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 func (i *Item) detail() object {
 	out := object{"id": i.ID}
 	for k, v := range map[string]string{
 		"description":      i.Description,
+		"synopsis":         i.Synopsis,
+		"script":           i.Script,
+		"originalTitle":    i.originalTitle(),
 		"sourceUrl":        i.SourceURL,
 		"transcriptSource": i.TranscriptSource,
 		"video":            i.OutVideo,
@@ -412,5 +447,5 @@ func (i *Item) detail() object {
 var htmlTags = regexp.MustCompile(`<[^>]+>`)
 
 func (i *Item) searchText() string {
-	return strings.ToLower(strings.Join(strings.Fields(strings.Join([]string{i.Title, strings.Join(i.AlsoTitled, " "), i.Summary, strings.Join(i.Tags, " "), strings.Join(i.Categories, " "), str(i.Series), htmlTags.ReplaceAllString(i.Description, " ")}, " ")), " "))
+	return strings.ToLower(strings.Join(strings.Fields(strings.Join([]string{i.Title, strings.Join(i.AlsoTitled, " "), i.Summary, strings.Join(i.Tags, " "), strings.Join(i.Categories, " "), str(i.Series), htmlTags.ReplaceAllString(i.Description, " "), htmlTags.ReplaceAllString(i.Synopsis, " ")}, " ")), " "))
 }

@@ -19,3 +19,5 @@ done
 for suite in facets multi-author; do
  node "$here/$suite.mjs" "$work/fixture"
 done
+# Sync needs the real endpoint, so it is handed the binary as well as a build.
+node "$here/sync.mjs" "$work/fixture" "$work/hypnotica"

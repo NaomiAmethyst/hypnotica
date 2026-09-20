@@ -10,7 +10,16 @@
   and transcript fingerprints.
 - `build.go`: build orchestration and catalogue/search/transcript serialization.
 - `feed.go`: combined and per-author podcast RSS.
-- `web.go`, `web/`: embedded browser assets and procedural icons.
+- `sync.go`: the optional endpoint — envelope validation, membership MACs,
+  pairing records, published shares, quotas and eviction. It never learns the
+  transfer schema.
+- `web.go`, `web/`: embedded browser assets and procedural icons. `app.js` owns
+  the browser-side records — playlists, favourites, names, notes and listening
+  history — the merge that reads a transfer file, the key schedule, and the QR
+  encoder.
+
+`docs/sync.md` is the design these were built from and the record of why each
+decision went the way it did.
 
 The Go module path is intentionally local (`hypnotica`) until a public hosting
 location is chosen. To change it, update go.mod and the entry point's import.
@@ -29,8 +38,32 @@ location is chosen. To change it, update go.mod and the entry point's import.
    stored representation changes.
 9. Saved audio has an unversioned cache. Rebuilding must not clear downloads.
 10. An unchanged catalogue page should have an unchanged manifest hash.
-11. Importing a transfer file merges. It adds playlists, playlist entries and
-    favourites, and removes none of them. Ids the build does not know are kept.
+11. Importing a transfer file merges. It adds playlists, playlist entries,
+    favourites, notes and listening history, and removes something only where
+    the file carries a dated record of the removal that is newer than what is
+    held. Ids the build does not know are kept.
+12. Deletions are recorded, never inferred. Unliking, removing a playlist entry,
+    deleting a playlist and forgetting a sitting each leave a dated record, so a
+    merge can tell "never had it" from "had it and let it go". Those records are
+    pruned after ninety days.
+13. Nothing a person records locally leaves the device unless they include it.
+    An export carries only the sections ticked, notes and history are not ticked
+    by default, and a note marked private leaves in nothing.
+14. Listening is recorded per device and counted per device. Counts are summed
+    for display and never on merge, because a merged view added to itself
+    compounds.
+15. The library is fully functional with no sync server. Sync is configured at
+    runtime by a pairing link, never by a build, and every sharing feature has a
+    serverless form. Nothing exists on an endpoint until somebody links a device.
+16. The server validates envelopes only: fingerprint, signature, counter and
+    membership. Payload shape is `Share.parse`'s job, and envelope and payload
+    versions move independently.
+17. A device writes only the slot its own key fingerprint names, and listening
+    events are republished by nobody but the device that recorded them.
+18. A group is one person's devices and never gains a member. Another person is
+    given a share link, which is read-only by construction: it carries a key that
+    derives a read MAC and a content key for one published document, and no
+    capability that could write anything.
 
 ## Dependencies
 

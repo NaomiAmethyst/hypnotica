@@ -33,6 +33,10 @@ self.addEventListener("activate", event => {
 const isAudio = url => /\.(mp3|m4a|m4b|ogg|opus|wav|flac|mp4)$/i.test(url.pathname);
 const isImage = url => /\.(jpe?g|png|webp|gif|svg|avif)$/i.test(url.pathname);
 const isData = url => /\/data\/|\/transcripts\//.test(url.pathname);
+/* The sync endpoint is not a file and must never be answered from a cache: a
+   stale blob would be an old view of the library handed back as a current one,
+   and offline it should simply not happen rather than fail strangely. */
+const isSync = url => /^\/(sync|pair|profile)\//.test(url.pathname);
 
 /* Serve a byte range out of a full cached response, as a real server would. */
 async function slice(request, cached) {
@@ -69,6 +73,7 @@ self.addEventListener("fetch", event => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
+  if (isSync(url)) return;                 // straight to the network, or not at all
 
   // Audio: whatever the user saved wins, always. Once we answer with respondWith
   // the browser does no range handling of its own, so a Range request has to be

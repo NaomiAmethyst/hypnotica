@@ -43,7 +43,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	usage := func() {
-		fmt.Fprintln(stdout, "Usage: hypnotica [-s SOURCE] <build|check|serve|init> [options]\n\nBuild a static, offline-capable site from YAML.\nUse hypnotica <command> --help for command options.")
+		fmt.Fprintln(stdout, "Usage: hypnotica [-s SOURCE] <build|check|serve|init|sync> [options]\n\nBuild a static, offline-capable site from YAML.\nUse hypnotica <command> --help for command options.")
 	}
 	if command == "" {
 		usage()
@@ -57,6 +57,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	output := "www"
 	var base, media string
 	var force, noMedia, noPrune, quiet bool
+	var syncDir, syncInvite, syncRemove string
+	var syncOpen bool
+	syncDisk := 5
 	port := 8080
 	bind := "0.0.0.0"
 	switch command {
@@ -75,6 +78,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		flags.IntVar(&port, "port", port, "listen port")
 		flags.StringVar(&bind, "bind", bind, "listen address")
 		flags.BoolVar(&quiet, "quiet", false, "suppress request logging")
+		flags.StringVar(&syncDir, "sync", "", "serve the sync endpoint from this directory")
+		flags.StringVar(&syncInvite, "sync-invite", "", "token that may create a new sync group")
+		flags.BoolVar(&syncOpen, "sync-open", false, "let anybody create a sync group, with no token")
+		flags.IntVar(&syncDisk, "sync-disk", syncDisk, "gigabytes the sync store may use")
+	case "sync":
+		flags.StringVar(&syncDir, "dir", "", "sync directory to inspect")
+		flags.StringVar(&syncRemove, "rm", "", "group or profile id to delete")
 	case "init", "check":
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", command)
@@ -110,6 +120,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			seen[i.ID] = true
 		}
 		return report(nil, l.Errors, stderr)
+	case "sync":
+		if syncDir == "" {
+			fmt.Fprintln(stderr, "sync needs --dir")
+			return 2
+		}
+		if e := SyncInspect(absolute(syncDir), syncRemove, stdout); e != nil {
+			fmt.Fprintln(stderr, e)
+			return 1
+		}
+		return 0
 	case "init":
 		if e := Init(source, stdout); e != nil {
 			fmt.Fprintln(stderr, e)
@@ -145,7 +165,31 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if !quiet {
 			log = stderr
 		}
-		server := &http.Server{Handler: PreviewHandler(root, log), ReadHeaderTimeout: 10 * time.Second}
+		handler := PreviewHandler(root, log)
+		if syncDir != "" {
+			dir := absolute(syncDir)
+			// A sync directory under the output is served by the file server,
+			// which would hand out every blob and honour none of the rules.
+			if dir == root || strings.HasPrefix(dir+string(filepath.Separator), root+string(filepath.Separator)) {
+				fmt.Fprintf(stderr, "The sync directory must be outside %s.\n", root)
+				return 2
+			}
+			if syncOpen && syncInvite != "" {
+				fmt.Fprintln(stderr, "Use --sync-open or --sync-invite, not both.")
+				return 2
+			}
+			sync := SyncHandler(SyncOptions{Dir: dir, Invite: syncInvite, Open: syncOpen,
+				Ceiling: int64(syncDisk) << 30, Log: log})
+			handler = syncRoutes(sync, handler)
+			how := "closed to new libraries"
+			if syncOpen {
+				how = "open to new libraries"
+			} else if syncInvite != "" {
+				how = "new libraries need the invite"
+			}
+			fmt.Fprintf(stdout, "  sync: %s (%s, up to %d GiB)\n", dir, how, syncDisk)
+		}
+		server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 		if e = server.Serve(listener); e != nil && !errors.Is(e, http.ErrServerClosed) {
 			fmt.Fprintln(stderr, e)
 			return 1

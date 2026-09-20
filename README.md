@@ -25,6 +25,9 @@ bin/hypnotica build -s content -o www --base-url https://audio.example.com
 bin/hypnotica serve -o www -p 8788
 ```
 
+`serve` also takes `--sync DIR` and `--sync-invite TOKEN` to run the optional
+sync endpoint beside the site; see [Sync](#sync).
+
 Open `http://localhost:8788`. Use HTTPS when hosting publicly; service workers
 and offline storage require a secure context (localhost also works).
 
@@ -41,6 +44,56 @@ docker run --rm -v "$PWD:/work" -w /work \
   ghcr.io/naomiamethyst/hypnotica:latest \
   build -s content -o www --base-url https://audio.example.com
 ```
+
+## Sync
+
+Sync is off until you link a device, and the site works fully without it. When
+it is on, the server stores blobs it cannot read: everything is encrypted in the
+browser under a key the endpoint is never given.
+
+Run an endpoint alongside the site, with a directory outside the build:
+
+```sh
+bin/hypnotica serve -o www -p 8788 --sync ~/.hypnotica-sync --sync-open
+```
+
+Then, on the first device, open the menu in the top right, choose **Link a
+device**, and give it the address — which is filled in already when the site is
+served by the same Hypnotica. That press is what creates the group key. It shows
+a code; open it on the second device with its camera, compare the six digits on
+the two screens, and confirm. The code is good for five minutes and one device,
+and it does not carry the key — that is handed over sealed, afterwards.
+
+Publishing a share does the same setup if it has not happened yet, so a library
+with one device can share a view of itself without linking a second one.
+
+The browser asks the endpoint what it wants before asking you for anything, so
+with `--sync-open` there is no token to type at any point. Three choices:
+
+- `--sync-open` — anybody may put a library on it. Right for an endpoint only you
+  and the people you live with can reach.
+- `--sync-invite TOKEN` — a library needs that token to get on. Only the first
+  device of a library ever presents it; every device after gets in with the code.
+- neither, the default — no new libraries, and the ones already there go on
+  working. Useful once your own is set up.
+
+**The site itself must be served over HTTPS, or opened from localhost.** Browsers
+offer the cryptography this needs nowhere else, so a build served over plain http
+to a machine on the network can use everything except sync, and says so when you
+try. `--sync-disk GB` caps the store
+at 5 GiB by default. `hypnotica sync --dir DIR` lists what is stored and `--rm ID`
+deletes a group or a share.
+
+A **share** is a separate published document with its own key, made from the
+Profile page and read-only for whoever you give the link to. It can carry
+favourites, playlists, notes, what you have played and how often, and what you
+are part-way through — each a separate tick. Reading one annotates the library
+with what its author has heard, which is what somebody choosing a recording for
+you actually wants. Revoking it takes it down; rotating it issues a new link and
+kills the old. A note marked private is in none of them.
+
+Losing every device loses the group key and the blobs become unreadable. The
+export file stays the way out, as it is for anyone who never turns sync on.
 
 ## Content
 
@@ -112,13 +165,24 @@ tool also manages that directory. `--force` recopies and retags media.
 - Search titles, descriptions, tags, authors, and transcripts.
 - Combine tag/category inclusion, requirements, and exclusions; filter by
   author, duration, and offline availability.
+- A Library facet over what you have done with a recording — played, noted,
+  favourited, in a playlist — with the same any/all/not cycle as tags, so
+  "liked but never played" is two clicks.
 - Persistent audio player, reorderable queue, playback speed, resume positions,
   playlists, keyboard shortcuts, and Media Session controls.
 - A heart on every recording and creator, and a favourites page of what it
   collects.
-- Playlists and favourites export to a JSON file and import back on another
-  device. An import is merged into what is already there: it adds and updates,
-  and never removes.
+- A listening history kept on the device that made it, with play counts, a
+  pause, and a control to forget one recording or clear the lot. A private note
+  against any recording, in plain text, never published.
+- Playlists, favourites, notes and history export to a JSON file and import back
+  on another device; the dialog picks what goes in, and notes and history stay
+  out unless asked for. An import merges into what is already there: it adds and
+  updates, and removes only where the file carries a dated record of a removal
+  newer than what is held.
+- Optional end-to-end encrypted sync between your own devices, and read-only
+  share links for other people. See [Sync](#sync); nothing is published until
+  you link a device.
 - Installable PWA with offline downloads and seeking in saved audio.
 - Progressive catalogue loading, IndexedDB caching, and virtualized grids for
   large libraries.

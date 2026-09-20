@@ -6,7 +6,8 @@
 | --- | --- |
 | `build` | `-o`/`--output`, `--base-url`, `--force`, `--media copy/link/none`, `--no-media`, `--no-prune` |
 | `check` | Validates documents, author references, and globally unique item IDs |
-| `serve` | `-o`/`--output`, `-p`/`--port`, `--bind`, `--quiet` |
+| `serve` | `-o`/`--output`, `-p`/`--port`, `--bind`, `--quiet`, `--sync`, `--sync-open`, `--sync-invite`, `--sync-disk` |
+| `sync` | `--dir` to list a sync store, `--rm` to delete a group or a share |
 | `init` | Creates a starter tree without replacing existing files |
 
 All commands accept `-s`/`--source` (default `content`). Output defaults to `www`;
@@ -199,20 +200,41 @@ paths, prompts, and provenance. RSS GUIDs remain `hypnotica:<author>:<item-id>`.
 
 ## Browser storage and transfer files
 
-The site keeps what a reader does in their own browser. Nothing is sent anywhere.
+The site keeps what a reader does in their own browser. Nothing is sent anywhere
+until a group exists — made by linking a device or by publishing a share — and
+then only as ciphertext. Both need `crypto.subtle`, which browsers offer only on
+a secure page, so sync is unavailable on a build served over plain http to
+anything but localhost; everything else works unchanged.
 
 | Key | Contents |
 | --- | --- |
-| `hyp.playlists` | Playlists: `id`, `name`, `items`, `created`, `updated` |
-| `hyp.favourites` | `{items, authors}`, each an id-to-time mapping |
+| `hyp.playlists` | Playlists: `id`, `name`, `items`, `created`, `updated`, and `removed`, an id-to-time record of entries taken out |
+| `hyp.playlists.gone` | Playlists deleted here, id to time |
+| `hyp.favourites` | `{items, authors}`, each an id-to-time mapping, plus `removed` carrying the same two shapes for what was unliked |
+| `hyp.names` | What an id was called when something first referenced it: `{t, a, u}` |
+| `hyp.notes` | Notes against items: `{text, updated}`, optionally `private`, and `was` where a merge displaced text |
+| `hyp.history` | `recent` sittings, `plays` counts held per device, `forget` and `before` watermarks, `epoch`, `paused` |
 | `hyp.queue`, `hyp.positions`, `hyp.rate` | Play queue, resume positions, speed |
-| `hyp.filters`, `hyp.dlqueue` | Library filters and the download queue |
+| `hyp.sync`, `hyp.sync.counters`, `hyp.sync.seen` | The endpoint, this device's write counters, and the highest counter seen per slot |
+| `hyp.shares`, `hyp.me`, `hyp.devices` | Published shares with their keys, the profile name, and the devices last seen |
+| `hyp.device` | A random id for this browser, so a play count can be held per device and summed for display |
+| `hypnotica-keys` | IndexedDB: the group key, and the device signing key |
+| `hyp.filters`, `hyp.dlqueue` | Library filters and the download queue. `tags`, `cats` and `meta` each hold `{any, all, not}`; `meta` takes `played`, `note`, `favourite` and `playlist`, matched against what this browser remembers rather than anything in the build |
 | `hypnotica-audio-v1` | Cache Storage for saved audio; unversioned |
 | `hypnotica` | IndexedDB catalogue pages, versioned by CATALOG_SCHEMA |
 
-Playlists and favourites export to a JSON file and import back on the same
-device or another one. Times are ISO 8601; a number of milliseconds is also
-accepted when reading.
+History is recorded always, for viewing on the device that recorded it. A
+sitting opens once thirty seconds of a recording have been heard and closes when
+the item changes or after half an hour of quiet, so one sitting is one entry
+however often it was paused. The controls are a pause and a clear; nothing is
+sent anywhere, and an export carries it only when it is ticked.
+
+Playlists, favourites, notes and history export to a JSON file and import back
+on the same device or another one. The export dialog ticks favourites and
+playlists; notes and history are left for the person to add, because they are
+written for oneself and a file is the thing that gets sent to somebody else. A
+note marked private is left out whatever is ticked. Times are ISO 8601; a number
+of milliseconds is also accepted when reading.
 
 ```json
 {
@@ -225,25 +247,141 @@ accepted when reading.
   ],
   "favourites": {
     "items": {"a-walk-in-the-woods": "2026-03-04T22:10:00.000Z"},
-    "authors": {"example": "2026-03-04T22:11:00.000Z"}
+    "authors": {"example": "2026-03-04T22:11:00.000Z"},
+    "removed": {"items": {"an-older-walk": "2026-03-04T23:00:00.000Z"}, "authors": {}}
+  },
+  "notes": {
+    "a-walk-in-the-woods": {"text": "Good for sleep.",
+                            "updated": "2026-03-04T22:12:00.000Z"}
+  },
+  "history": {
+    "recent": [{"i": "a-walk-in-the-woods", "t": "2026-03-04T21:40:00.000Z",
+                "s": 1180, "c": true, "d": "9f3c1a2b4d5e"}],
+    "plays": {"a-walk-in-the-woods": {"f": "2026-02-01T09:00:00.000Z",
+                                      "l": "2026-03-04T21:40:00.000Z",
+                                      "c": {"9f3c1a2b4d5e": {"n": 3, "e": 0}}}}
+  },
+  "names": {
+    "a-walk-in-the-woods": {"t": "A Walk in the Woods", "a": "Example Author",
+                            "u": "2026-03-04T22:10:00.000Z"}
   }
 }
 ```
 
-Either top-level section may be absent. A bare list of playlists, or a single
+Every top-level section may be absent. A bare list of playlists, or a single
 playlist object, reads the same way, so one entry copied out of a file works.
 Favourites also accept a plain list of ids. A file declaring a `hypnotica`
 version newer than this build is refused rather than half-read.
 
-An import merges and never removes:
+An import merges. It adds, and it removes only where the file carries a dated
+record of a removal that is newer than what is held here:
 
 - A playlist whose `id` is already here gains the entries it is missing, keeps
   the ones it has, and takes the file's name only when the file's `updated` is
   newer. Otherwise it arrives as a new playlist under its own id.
 - Favourites join the ones already held, keeping the earlier of the two times.
+  A favourite the file records as removed goes, unless it was liked again here
+  after that removal. The same comparison runs the other way, so a file written
+  before a removal does not undo it.
+- A playlist the file records as deleted goes, unless it has been edited here
+  since. An entry the file records as removed goes when the file is the more
+  recently edited of the two copies.
+- A note is taken when its `updated` is newer; text it displaces is kept beside
+  it and can be restored once. A note is deleted by emptying it, which is why an
+  empty note with a newer time is a deletion rather than nothing.
+- Listening events union and are deduplicated on the device and time that wrote
+  them. Play counts are held per device: a merge takes the higher count for each
+  device, or the newer epoch outright, and totals are summed only for display.
 - Item and author ids the build does not know are kept, not dropped, and the
   import reports how many there were. A library that later gains them shows
-  them without another import.
+  them without another import. `names` says what they were called, so a record
+  whose item has been retitled still reads as something.
+
+Tombstones are pruned after ninety days. A file old enough to still be asserting
+an addition that old is old enough to be wrong about everything else too.
+
+## The sync endpoint
+
+`serve --sync DIR` adds an optional endpoint that stores blobs it cannot read.
+It is off unless the flag is given, refuses to start when `DIR` is inside the
+output directory, and is routed before the file server.
+
+How a library gets on to one is the operator's choice, and it is the only thing
+the group key cannot authorise, because the server has not been given it yet:
+
+| Flag | `create` | Effect |
+| --- | --- | --- |
+| neither | `closed` | Only groups already in `DIR` are served. The default. |
+| `--sync-open` | `open` | Anybody may create a group. No token is asked for, and linking a device is an address and nothing else. |
+| `--sync-invite TOKEN` | `invite` | Creating a group needs that token. Only the first device of a library ever presents it. |
+
+The two flags are mutually exclusive. `--sync-disk GB` caps the store, 5 GiB by
+default; group creation is rate limited whichever mode is in force.
+
+A group is one person's devices. Another person never joins a group; they are
+given a share link, which is read-only by construction.
+
+| Method | Path | Authorised by | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/sync/` | nothing | `{"hypnotica":1,"create":"open"\|"invite"\|"closed"}`, so a browser can ask for a token only when one is wanted |
+| `POST` | `/sync/<group>` | `X-Hypnotica-Invite`, or nothing when open | Create a group, handing over its enrolment key |
+| `GET` | `/sync/<group>/` | enrolment MAC | List slots, counters and arrival times |
+| `GET`/`PUT`/`DELETE` | `/sync/<group>/<device>` | enrolment MAC, plus a signed envelope on `PUT` | One device's blob |
+| `POST` | `/sync/<group>/pair` | enrolment MAC | Open a pairing, valid five minutes |
+| `GET`/`POST`/`PUT`/`DELETE` | `/pair/<id>` | pairing MAC | The pairing exchange |
+| `GET` | `/profile/<id>` | read MAC from the share key | Read a published share |
+| `PUT`/`DELETE` | `/profile/<id>` | enrolment MAC and `X-Hypnotica-Group` | Publish or revoke one |
+
+Every id is 26 characters of lower-case base32. The membership MAC is
+`HMAC-SHA256(key, "hypnotica/auth/1\n" + method + "\n" + path + "\n" + hex(sha256(body)))`,
+base64, in `X-Hypnotica-Auth`, `X-Hypnotica-Pair` or `X-Hypnotica-Read`.
+
+An envelope is the only thing the server parses:
+
+```json
+{
+  "v": 1, "slot": "<device fingerprint>", "key": "<base64 SPKI, P-256>",
+  "counter": 41, "written": "2026-03-05T12:00:00Z",
+  "n": "<base64 nonce>", "ct": "<base64 AES-256-GCM>", "sig": "<base64 r||s>",
+  "recv": "<stamped by the server, never by the sender>"
+}
+```
+
+It is accepted when the SHA-256 of `key` names the slot, the signature verifies
+over `"hypnotica/env/1\n" + scope + "\n" + slot + "\n" + counter + "\n" + hex(sha256(ct))`,
+and the counter exceeds the one held. The scope is the group id for a device
+slot and the profile id for a share. Nothing else about the payload is checked
+here: the plaintext is validated by the browser, which is the only thing that
+can read it.
+
+Blobs are returned as `application/octet-stream` with `Content-Disposition:
+attachment` and `nosniff`. Limits: 2 MiB a blob, 64 slots and 256 shares a
+group, one write every five seconds a slot with a burst of twenty, five minutes
+for a pairing, two years before an untouched slot is collected, and 5 GiB of
+disk. They are bounds against a loop, not a fence: an endpoint closed to new
+groups is reachable only by devices that were linked deliberately.
+
+## Keys
+
+One 256-bit group key is the whole secret, made when a device is first linked
+and never before. Everything else is HKDF-SHA256 over it:
+
+| Value | Info string | Held by |
+| --- | --- | --- |
+| Group id | `hypnotica/group-id` | server and devices |
+| Content key | `hypnotica/content` | devices only |
+| Enrolment key | `hypnotica/enrol` | server and devices |
+
+A share has its own 256-bit key, carried in the link's fragment, from which the
+profile id, its content key and its read key derive under `hypnotica/profile-id`,
+`hypnotica/profile-content` and `hypnotica/profile-read`. The group's content key
+is never shared with anybody.
+
+Each device also holds a P-256 signing key, generated non-extractable, whose
+fingerprint is the first 128 bits of the SHA-256 of its SPKI encoding. Pairing
+uses ephemeral P-256 ECDH keys and shows six digits derived from both public
+keys on both screens; the group key travels sealed to the joining device's key
+and never appears in a link or a code.
 
 ## Migration from Python
 

@@ -8,13 +8,16 @@
   --k-voice:#8a3f86; --k-audience:#1f6f85; --k-induction:#35619f;
   --k-production:#4f7042; --k-trigger:#9c6612; --k-compulsion:#8f4520;
   --k-cw:#a8323f; --k-content:#6b5c63;
+  /* Not a tag kind: what the reader has done with a recording. Its own hue so
+     the Library facet does not read as a namespace somebody forgot to colour. */
+  --k-meta:#2f7d6b;
 }
 @media(prefers-color-scheme:dark){:root{
   --bg:#151013; --fg:#f0e8ec; --mut:#a2919a; --line:#2e2429; --card:#1e171b;
   --accent:#a98aff; --accent-fg:#1b1418; --shadow:0 1px 3px rgba(0,0,0,.4); --bar:#1a1418;
   --k-voice:#dda3d6; --k-audience:#6cc2d6; --k-induction:#8fb3e8;
   --k-production:#a6c890; --k-trigger:#e2b459; --k-compulsion:#e2946e;
-  --k-cw:#f28c8c; --k-content:#a2919a;
+  --k-cw:#f28c8c; --k-content:#a2919a; --k-meta:#7fd0bc;
 }}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -37,13 +40,37 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);
   display:flex;align-items:center;gap:8px;white-space:nowrap}
 .brand .dot{width:12px;height:12px;border-radius:50%;
   background:radial-gradient(circle at 30% 30%,var(--accent),transparent 70%),var(--accent)}
-.navlinks{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+/* One copy of the links, laid along the bar where there is room and folded
+   behind a button where there is not.
+
+   Not a <details>: a browser hides the contents of a closed one in a way an
+   author's `display` cannot override, so hiding the summary on a wide screen
+   took the links with it. A button and a class are dull and they work. */
+.bars{position:relative;margin-left:auto}
+.barsbtn{display:none;border:1px solid var(--line);background:none}
+.navlinks{display:flex;gap:4px;flex-wrap:wrap}
 .navlinks a{padding:6px 11px;border-radius:999px;text-decoration:none;color:var(--mut);
   font-size:.9rem}
 .navlinks a.active,.navlinks a:hover{background:var(--card);color:var(--fg)}
-.netbadge{font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);
-  color:var(--mut)}
-.netbadge.off{border-color:var(--accent);color:var(--accent)}
+.burger{position:relative;display:block;width:16px;height:2px;border-radius:2px;
+  background:currentColor}
+.burger::before,.burger::after{content:"";position:absolute;left:0;width:16px;height:2px;
+  border-radius:2px;background:currentColor}
+.burger::before{top:-5px}
+.burger::after{top:5px}
+
+@media(max-width:760px){
+  .barsbtn{display:flex;align-items:center;justify-content:center;
+    width:38px;height:38px;border-radius:10px;color:var(--mut)}
+  .bars.open .barsbtn,.barsbtn:hover{border-color:var(--accent);color:var(--fg)}
+  .bars .navlinks{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:40;
+    flex-direction:column;min-width:190px;padding:7px;gap:1px;background:var(--card);
+    border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .bars.open .navlinks{display:flex}
+  .bars .navlinks a{padding:8px 11px;border-radius:8px;font-size:.86rem}
+  .topbar{gap:8px}
+  .brand{font-size:1rem}
+}
 
 /* ---------- controls ---------- */
 .controls{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 4px;align-items:center}
@@ -130,6 +157,7 @@ b.f-not{color:var(--mut);text-decoration:line-through}
 .tag.k-compulsion{--k:var(--k-compulsion)}
 .tag.k-cw{--k:var(--k-cw)}
 .tag.k-content{--k:var(--k-content)}
+.tag.k-meta{--k:var(--k-meta)}
 
 /* A group is one namespace. The gap between groups is wider than the gap
    inside one, which is the whole of the grouping on a card. */
@@ -405,6 +433,23 @@ pre.prompt{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;
 .measured .disputed{border-left:3px solid var(--accent);padding-left:11px;
   margin-top:12px}
 
+/* The heading between somebody's own words and the library's. Small, because
+   it is a label rather than a section title -- the reader is being told which
+   voice they are about to read, not shown a new part of the page. */
+h2.writeup{font-size:.78rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--mut);margin:18px 0 6px;padding-top:12px;border-top:1px solid var(--line)}
+/* The label is already small, so the mark on it does not shrink again -- and it
+   takes none of the label's tracking or casing, being a glyph and not a word. */
+h2.writeup .gen{font-size:1em;margin-left:6px;letter-spacing:0;text-transform:none}
+
+/* The name a recording came in under, where the library is showing another.
+   Set quietly and below the title, because it is provenance rather than a
+   second title -- but the string itself is kept plain and exact, since the
+   whole use of it is searching for it or recognising it on somebody's site. */
+.wasnamed{margin:2px 0 0;font-size:.82rem;color:var(--mut)}
+.wasnamed span{color:var(--fg);font-style:normal}
+.prose.synopsis{color:var(--fg)}
+
 /* A transcript with no timestamps -- one the creator supplied rather than one a
    model produced. Prose, so set as prose: <pre> turned five-hundred-character
    paragraphs into a sideways-scrolling wall. */
@@ -459,3 +504,89 @@ pre.prompt{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;
 .simlist li { display: flex; gap: 7px; align-items: baseline; padding: 4px 10px;
   border: 1px solid var(--line); border-radius: 999px }
 .simlist .meta { font-size: .74rem; color: var(--mut); font-variant-numeric: tabular-nums }
+
+/* ---- what was played, and what was written about it --------------------- */
+/* The history list leads with a time rather than a position, so its first
+   column is wider than a track number and set in figures that line up. */
+ol.list.times li .n{width:auto;min-width:3.6em;font-variant-numeric:tabular-nums}
+/* A note is prose under a title, so its row grows downwards and aligns to the
+   top instead of centring a paragraph against a heading. */
+ol.list.notes li{align-items:flex-start}
+ol.list.notes li .t b{white-space:normal}
+.notetext{margin:7px 0 0;font-size:.88rem;line-height:1.5;white-space:pre-wrap;
+  overflow-wrap:anywhere;color:var(--fg)}
+
+.played{color:var(--mut);font-size:.85rem;margin:14px 0 0}
+button.link{border:0;background:none;padding:0;font:inherit;font-size:inherit;
+  color:var(--accent);cursor:pointer;text-decoration:underline}
+button.link:hover{opacity:.8}
+
+details.note-box{border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px 15px;margin:22px 0;background:var(--card)}
+details.note-box > summary{cursor:pointer;font-weight:600}
+details.note-box > summary .cnt{margin-left:8px;font-size:.72rem;font-weight:600;
+  padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+details.note-box textarea{width:100%;margin-top:4px;line-height:1.5;resize:vertical}
+.noterow{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:10px 0 0}
+.noterow label{display:flex;align-items:center;gap:7px;color:var(--mut);
+  font-size:.85rem;margin-right:auto}
+.noterow input[type=checkbox]{min-width:0;padding:0}
+details.note-box .disputed{border-left:3px solid var(--accent);padding-left:11px;
+  margin-top:14px}
+
+.exprow{display:flex;align-items:flex-start;gap:10px;margin:12px 0;
+  color:var(--mut);font-size:.88rem;line-height:1.45;cursor:pointer}
+.exprow input{min-width:0;padding:0;margin-top:3px;flex:none}
+.exprow b{color:var(--fg);font-weight:600}
+.exprow input:disabled + span{opacity:.55}
+
+/* ---- the corner menu, and everything sync grew ------------------------- */
+details.me{position:relative;margin-left:10px}
+details.me > summary{cursor:pointer;display:flex;align-items:center;gap:7px;
+  padding:5px 11px;border:1px solid var(--line);border-radius:999px;
+  font-size:.8rem;color:var(--mut);list-style:none;white-space:nowrap}
+details.me > summary::-webkit-details-marker{display:none}
+details.me[open] > summary,details.me > summary:hover{border-color:var(--accent);color:var(--fg)}
+.medot{width:9px;height:9px;border-radius:50%;flex:none;box-sizing:border-box;
+  background:radial-gradient(circle at 30% 30%,var(--accent),transparent 70%),var(--accent)}
+/* Offline: the same dot, hollowed out. Never the only way it is said. */
+details.me.off .medot{background:none;border:2px solid var(--mut)}
+details.me.off > summary{border-style:dashed}
+.mebody .nonet{margin:4px 11px 7px;color:var(--mut)}
+.mebody{position:absolute;right:0;top:calc(100% + 7px);z-index:40;min-width:230px;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:7px;display:flex;flex-direction:column;gap:1px}
+.mebody a,.mebody .melink{display:block;width:100%;text-align:left;padding:8px 11px;
+  border:0;background:none;border-radius:8px;font:inherit;font-size:.86rem;
+  color:var(--fg);text-decoration:none;cursor:pointer}
+.mebody a:hover,.mebody .melink:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.mebody a.active{background:color-mix(in srgb,var(--accent) 14%,transparent);
+  color:var(--accent);font-weight:600}
+.mebody .note{margin:6px 11px;font-size:.75rem}
+.mesep{height:1px;background:var(--line);margin:5px 9px}
+details.me.here > summary{border-color:var(--accent);color:var(--fg)}
+
+.prow{display:flex;gap:10px;align-items:center;margin:14px 0 4px;flex-wrap:wrap}
+.prow input{flex:1;min-width:200px}
+.sharelink{width:100%;margin-top:6px;font-size:.76rem;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+ol.list.shares li{align-items:flex-start}
+ol.list.shares li .t b{white-space:normal}
+
+/* The code, and the six digits that make handing a key over safe. */
+svg.qr{width:min(260px,70vw);height:auto;display:block;margin:12px auto;
+  border:8px solid #fff;border-radius:6px;background:#fff}
+.sas{font-size:2rem;letter-spacing:.32em;text-align:center;margin:14px 0;
+  font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent)}
+details.astext{margin-top:10px}
+details.astext > summary{cursor:pointer;font-size:.82rem;color:var(--mut)}
+details.astext textarea{width:100%;margin-top:7px;font-size:.76rem;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* Reading somebody else's library sits on top of your own, and says so on every
+   screen it changes rather than only on the page it came from. */
+.theirbar{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:14px 0 0;
+  padding:10px 14px;border:1px solid var(--accent);border-radius:var(--radius);
+  background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.86rem}
+.theirbar b{font-weight:600}
+.card .theirs{margin:6px 0 0;font-size:.74rem;color:var(--accent);font-weight:600}

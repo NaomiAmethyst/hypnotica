@@ -6,7 +6,10 @@ npm ci                # Node.js 22.13+ or 24+
 npm test              # backend plus all seven browser suites
 ```
 
-`tests/run.sh` builds the real Go executable and two sites in a temporary directory:
+`tests/run.sh` builds the real Go executable and two sites in a temporary directory.
+The sync suite starts that executable as a server with `--sync` and drives two
+jsdom browsers through it, so the crypto is exercised against the Go side rather
+than against a stub of it:
 
 - `tests/fixture`: four synthetic items across two authors, with precise tag
   combinations for author and facet assertions.
@@ -27,13 +30,14 @@ requires reviewing the compatibility contract.
 
 | File | Checks |
 | --- | --- |
-| `frontend.mjs` | Search, rendering, player, playlists, favourites, import/export, offline, provenance, video, measurements |
+| `frontend.mjs` | Search, rendering, player, playlists, favourites, notes, recorded removals, import/export, offline, provenance, video, measurements |
 | `catalog.mjs` | IndexedDB reuse, page hashes, schema changes, offline upgrade failure |
 | `scroll.mjs` | Navigation restoration, filtering, facet panel scrolling |
-| `queue.mjs` | Auto-advance, resume, stale queue items, failed playback |
+| `queue.mjs` | Auto-advance, resume, stale queue items, failed playback, listening history |
 | `sw-range.mjs` | Offline byte-range responses |
 | `facets.mjs` | Any/all/not tags, categories, spoilers, duration, persistence |
 | `multi-author.mjs` | Author filters, pages, feeds, cross-author playback |
+| `sync.mjs` | Two browsers against the real endpoint: pairing, the six digits, an encrypted round trip, shares, and the QR code read back by `qrread.mjs` |
 
 Each script accepts a build directory. `sh tests/run.sh /path/to/www` optionally
 uses another large build for the first five suites; it still builds the small

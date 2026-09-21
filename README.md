@@ -7,6 +7,29 @@ website is plain HTML, CSS, and JavaScript, with no frontend build step.
 The output runs on any static web server. Python, FFmpeg, and a database are not
 required. Audio probing and web assets are embedded in the executable.
 
+## Where this sits
+
+Hypnotica reads a library; it does not make one. Writing the YAML by hand is
+perfectly reasonable for a few dozen recordings, and the format is documented
+below.
+
+[**Inductor**](https://github.com/NaomiAmethyst/inductor) is what fills one at
+scale, from audio: it transcodes and fingerprints the files, transcribes them,
+measures the sound, puts the transcript to a model for a synopsis, tags and a
+list of what a recording suggests to the listener, rules those tags against a
+controlled vocabulary, and writes the `hypnotica/v1` documents this builder
+reads. The two never meet — Inductor knows nothing about websites, Hypnotica
+never transcribes anything — so a library outlives either of them.
+
+[**Driftspace**](https://github.com/NaomiAmethyst/driftspace-template) is a
+ready-made library directory to start from: the layout, a tag vocabulary, a
+worked example carried all the way through, and the notes an agent needs to
+fill it.
+
+```sh
+git clone https://github.com/NaomiAmethyst/driftspace-template my-library
+```
+
 ## Build and run
 
 Prebuilt binaries for Linux, Windows, and macOS (amd64 and arm64) are available
@@ -84,8 +107,19 @@ try. `--sync-disk GB` caps the store
 at 5 GiB by default. `hypnotica sync --dir DIR` lists what is stored and `--rm ID`
 deletes a group or a share.
 
+Opening a share link shows their view and lets you open any of their playlists
+on its own entries, play what your library has of one, or copy it whole. Pressing
+**Keep this profile** remembers the link: from then on, a recording says
+"Favourited by Naomi", which of their playlists it is in and when they last
+played it, and the Library filter gains "Liked by Naomi" to search on. Only the
+ids, list names and counts are kept — not their timeline or their notes — and
+the links travel between your own devices while what was fetched with them does
+not. A revoked link says so and stops being believed.
+
 A **share** is a separate published document with its own key, made from the
-Profile page and read-only for whoever you give the link to. It can carry
+Profile page and read-only for whoever you give the link to. It belongs to the
+library rather than to the device that made it, so any of your devices can copy
+its link, rotate it or revoke it. It can carry
 favourites, playlists, notes, what you have played and how often, and what you
 are part-way through — each a separate tick. Reading one annotates the library
 with what its author has heard, which is what somebody choosing a recording for
@@ -94,6 +128,24 @@ kills the old. A note marked private is in none of them.
 
 Losing every device loses the group key and the blobs become unreadable. The
 export file stays the way out, as it is for anyone who never turns sync on.
+
+### On iOS
+
+Two platform limits, neither of which a web app can do anything about:
+
+- **An app added to the home screen keeps its own storage.** Safari and the
+  installed app are separate libraries with separate favourites, history and
+  keys. There is no API to share them. Treat them as two devices and link them:
+  they will then sync like any other pair.
+- **The installed app is never offered links to its own site.** A pairing code
+  or share link tapped in Messages opens Safari. iOS has no equivalent of the
+  link capturing Android does from the manifest's `scope`, which is why this
+  works there and not here.
+
+So the menu has **Paste a link**: copy the link in Safari, open the app, paste it
+in. That covers both a share somebody sends you and the code for pairing the app
+with Safari on the same phone. A share opened in Safari on iOS offers the copy
+itself.
 
 ## Content
 
@@ -168,6 +220,16 @@ tool also manages that directory. `--force` recopies and retags media.
 - A Library facet over what you have done with a recording — played, noted,
   favourited, in a playlist — with the same any/all/not cycle as tags, so
   "liked but never played" is two clicks.
+- Save a search under a name and press it to get the whole thing back: the
+  words, the chips, the sort, the duration.
+- Pin any chosen filter, from the pin on its chip or by holding the chip
+  down, and it applies to every search and every creator's page instead of
+  just this one. Set once that you would rather not be shown an audience you
+  are not, or a content warning you would rather not meet, and stop setting
+  it. A pinned chip has no ✕ and Clear does not reach it; a small line above
+  the chips says how many are pinned and offers to suspend them. Pinned
+  filters travel between your own devices and appear in no export and no
+  share.
 - Persistent audio player, reorderable queue, playback speed, resume positions,
   playlists, keyboard shortcuts, and Media Session controls.
 - A heart on every recording and creator, and a favourites page of what it
@@ -183,6 +245,9 @@ tool also manages that directory. `--force` recopies and retags media.
 - Optional end-to-end encrypted sync between your own devices, and read-only
   share links for other people. See [Sync](#sync); nothing is published until
   you link a device.
+- Keep a share somebody gives you, and recordings say where they have liked,
+  listed or played them — with a "Liked by" added to the Library filter for
+  each person kept.
 - Installable PWA with offline downloads and seeking in saved audio.
 - Progressive catalogue loading, IndexedDB caching, and virtualized grids for
   large libraries.

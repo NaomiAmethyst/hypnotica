@@ -38,6 +38,8 @@ async function app(filters, store) {
   window.navigator.mediaSession = { setActionHandler() {}, set metadata(v) {} };
   window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+  window.prompt = () => "Saved search";
+  window.confirm = () => true;
   if (filters) window.localStorage.setItem("hyp.filters", JSON.stringify(filters));
   // What the reader has done, seeded before the app reads it: the modules cache
   // on first read, so this has to be in place before app.js runs at all.
@@ -79,7 +81,25 @@ async function app(filters, store) {
       throw new Error(`could not set ${v} to ${mode}`);
     },
     async altClick(key, v) { hit(chip(key, v), true); await sleep(30); },
+    hit,
+    // The pin on a chosen chip, which is what moves it between this search and
+    // every search.
+    async pin(v) {
+      const b = $$('.fsel [data-act="facetPin"]').find(x => x.dataset.v === v);
+      if (!b) throw new Error(`no chip in the bar for ${v}`);
+      hit(b); await sleep(50);
+    },
+    chipFor: v => $$(".fsel .chip").find(c => c.querySelector(`[data-v="${v}"]`)),
+    async hold(v) {
+      const chip = $$(".fsel .chip").find(c => c.querySelector(`[data-v="${v}"]`));
+      if (!chip) throw new Error(`no chip in the bar for ${v}`);
+      chip.querySelector(".lab").dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+      await sleep(700);
+    },
+    async go(hash) { window.location.hash = hash; await sleep(250); },
+    text: () => doc.querySelector("main")?.textContent || "",
     saved: () => JSON.parse(window.localStorage.getItem("hyp.filters")),
+    store: k => JSON.parse(window.localStorage.getItem(k) || "null"),
   };
 }
 
@@ -313,6 +333,133 @@ const DID = {
   ok("with nothing done, the panel is still there", h.panels().includes("meta"));
   await h.set("meta", "played", "any");
   ok("...and asking for played gives nothing rather than everything", h.n() === 0, `${h.n()}`);
+}
+
+/* A standing filter is the one somebody sets once and stops thinking about, so
+   what matters is that it keeps applying where they are not looking: another
+   search, a creator's page, and the buttons that queue a whole page at once. */
+console.log("\n== a filter that outlives the search ==");
+{
+  const h = await app();
+  await h.set("tags", "Audience: F4M", "not");
+  ok("an ordinary exclusion is a chip with a way off it",
+     !!h.chipFor("Audience: F4M")?.querySelector('[data-act="facetOff"]'));
+
+  await h.pin("Audience: F4M");
+  ok("pinning moves it out of the search and into what is always on",
+     (h.saved()?.tags?.not || []).length === 0 &&
+     (h.store("hyp.always")?.tags?.not || []).join() === "Audience: F4M",
+     JSON.stringify(h.store("hyp.always")?.tags));
+  ok("...keeping the mode it was pinned in", ids(h.titles()) === "nyx-4,voxa-2", ids(h.titles()));
+  ok("...and taking its ✕ away, because it is not this search's to drop",
+     !h.chipFor("Audience: F4M")?.querySelector('[data-act="facetOff"]'));
+  ok("...and saying so above the chips",
+     /pinned, on every search/.test(h.$(".pinline")?.textContent || ""),
+     h.$(".pinline")?.textContent);
+
+  await h.set("tags", "ASMR-ish", "any");
+  ok("a search still narrows inside it", ids(h.titles()) === "nyx-4", ids(h.titles()));
+
+  h.hit(h.$('[data-act="facetClear"][data-key="tags"][data-kind="audience"]'));
+  await sleep(60);
+  ok("Clear does not reach a pinned one", ids(h.titles()) === "nyx-4", ids(h.titles()));
+
+  await h.set("tags", "ASMR-ish", "");
+  h.hit(h.$('[data-act="alwaysSuspend"]'));
+  await sleep(60);
+  ok("suspending shows everything again", h.n() === 4, `${h.n()}`);
+  ok("...without taking it apart",
+     (h.store("hyp.always")?.tags?.not || []).join() === "Audience: F4M");
+  h.hit(h.$('[data-act="alwaysSuspend"]'));
+  await sleep(60);
+  ok("...and resuming puts it back", h.n() === 2, `${h.n()}`);
+
+  await h.go("#/author/voxa");
+  // The grid there is windowed and fills in after the page, so the count the
+  // page states is the thing to read rather than the cards.
+  ok("a creator's page is filtered too", /1 files/.test(h.text()),
+     (h.text().match(/\d+ files/) || ["nothing"])[0]);
+  ok("...and carries the same small line, with what it took off the page",
+     /hidden here/.test(h.$(".pinline")?.textContent || ""), h.$(".pinline")?.textContent);
+
+  await h.go("#/");
+  await h.pin("Audience: F4M");
+  ok("pinning again puts it back in the search it came from",
+     (h.saved()?.tags?.not || []).join() === "Audience: F4M" &&
+     !(h.store("hyp.always")?.tags?.not || []).length,
+     JSON.stringify([h.saved()?.tags?.not, h.store("hyp.always")?.tags?.not]));
+  ok("...and the line goes with the last pin", !h.$(".pinline"));
+}
+
+/* The same thing with a finger. An eight-pixel pin is not a touch target, so
+   holding the chip down does it instead. */
+console.log("\n== pinning by holding it down ==");
+{
+  const h = await app();
+  await h.set("cats", "Free Files", "not");
+  await h.hold("Free Files");
+  ok("a long press pins it", (h.store("hyp.always")?.cats?.not || []).join() === "Free Files",
+     JSON.stringify(h.store("hyp.always")?.cats));
+  await h.hold("Free Files");
+  ok("...and another unpins it", !(h.store("hyp.always")?.cats?.not || []).length &&
+     (h.saved()?.cats?.not || []).join() === "Free Files",
+     JSON.stringify([h.saved()?.cats?.not, h.store("hyp.always")?.cats?.not]));
+}
+
+/* A pinned exclusion empties its own count -- that is what it is for -- so the
+   panel has to keep offering it, or there would be no way to take it off. */
+console.log("\n== a pinned value stays reachable ==");
+{
+  const h = await app();
+  await h.set("tags", "Audience: F4M", "not");
+  await h.pin("Audience: F4M");
+  ok("nothing it matches is left to count", h.n() === 2, `${h.n()}`);
+  h.openAll();
+  ok("...and it is still in its panel, to be taken off again",
+     h.$$('[data-act="facet"]').some(b => b.dataset.v === "Audience: F4M"));
+  await h.set("tags", "Audience: F4M", "");
+  ok("...which unsets it wherever it was living",
+     !(h.store("hyp.always")?.tags?.not || []).length && h.n() === 4,
+     JSON.stringify(h.store("hyp.always")?.tags));
+}
+
+console.log("\n== searches somebody meant to keep ==");
+{
+  const h = await app();
+  await h.set("tags", "Femdom", "any");
+  h.hit(h.$('[data-act="searchSave"]'));
+  await sleep(80);
+  ok("a search can be saved", (h.store("hyp.searches") || []).length === 1,
+     JSON.stringify(h.store("hyp.searches")));
+  ok("...and offered by name", /Saved search/.test(h.$(".saved")?.textContent || ""),
+     h.$(".saved")?.textContent);
+
+  await h.set("tags", "Femdom", "");
+  ok("...with the filter free to change afterwards", h.n() === 4, `${h.n()}`);
+  h.hit(h.$('[data-act="searchApply"]'));
+  await sleep(80);
+  ok("...and put back whole by pressing it", ids(h.titles()) === "voxa-1,voxa-2",
+     ids(h.titles()));
+
+  // What a saved search is not: a way of moving pinned filters around.
+  await h.set("tags", "Femdom", "");
+  await h.set("cats", "Free Files", "not");
+  await h.pin("Free Files");
+  h.hit(h.$('[data-act="searchApply"]'));
+  await sleep(80);
+  ok("applying one leaves the pinned ones alone",
+     (h.store("hyp.always")?.cats?.not || []).join() === "Free Files",
+     JSON.stringify(h.store("hyp.always")?.cats));
+  ok("...and it is in none of what was saved",
+     !JSON.stringify(h.store("hyp.searches")).includes("Free Files"),
+     JSON.stringify(h.store("hyp.searches")));
+
+  h.hit(h.$('[data-act="searchDrop"]'));
+  await sleep(80);
+  ok("a saved search can be forgotten", (h.store("hyp.searches") || []).length === 0);
+  ok("...and is remembered as forgotten, so a device does not hand it back",
+     Object.keys(h.store("hyp.searches.gone") || {}).length === 1,
+     JSON.stringify(h.store("hyp.searches.gone")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

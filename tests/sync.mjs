@@ -166,9 +166,15 @@ const liked = firstPage[0].id;
 
 // Something for the other device to receive.
 await A.go("#/item/" + encodeURIComponent(liked));
-A.click(A.$("article .actions button.heart"));
+A.click(A.$(".item .actions button.heart"));
 await sleep(100);
 ok("A has something to share", !!A.store("hyp.favourites")?.items?.[liked]);
+// And a creator, which a share carries as its own kind of favourite.
+await A.go("#/author/" + encodeURIComponent(firstPage[0].author));
+A.click(A.$(".authorhead .actions button.heart"));
+await sleep(150);
+ok("...including a creator", !!A.store("hyp.favourites")?.authors?.[firstPage[0].author],
+   JSON.stringify(A.store("hyp.favourites")?.authors));
 
 A.click(A.$('[data-act="linkStart"]'));
 await sleep(120);
@@ -245,10 +251,45 @@ const shareLink = await (async () => {
   A.setVal(A.$("#meNameBox"), "Naomi");
   A.click(A.$('[data-act="meSave"]'));
   await sleep(200);
+  // Something for the share to carry beyond a favourite.
+  await A.go("#/");
+  A.click(A.$("#listAll"));
+  await sleep(200);
+  await A.go("#/profile");
   A.click(A.$('[data-act="shareNew"][data-preset="choosing"]'));
   await waitFor(() => !!A.$(".sharelink"), 10000);
   return A.$(".sharelink")?.value || "";
 })();
+ok("the share carries a playlist as well as the favourites",
+   (A.store("hyp.playlists") || []).length === 1, JSON.stringify(A.store("hyp.playlists")));
+
+console.log("\n== a name is a setting, not a search ==");
+{
+  A.click(A.$('[data-act="syncNow"]'));
+  await sleep(1200);
+  B.click(B.$('[data-act="syncNow"]'));
+  const named = await waitFor(() => B.store("hyp.me")?.name === "Naomi", 15000);
+  ok("a name set on one device reaches the other", named, JSON.stringify(B.store("hyp.me")));
+
+  /* The one that actually bit: a name from before names carried a time. Two of
+     those compare equal, so each device refused the other's and went on showing
+     its own. */
+  B.put("hyp.me", { name: "Older" });
+  A.put("hyp.me", { name: "Naomi" });
+  A.click(A.$('[data-act="syncNow"]'));
+  await sleep(1500);
+  B.click(B.$('[data-act="syncNow"]'));
+  const settled = await waitFor(() =>
+    B.store("hyp.me")?.name === A.store("hyp.me")?.name, 15000);
+  ok("two names with no times settle on one rather than refusing each other",
+     settled, `${JSON.stringify(A.store("hyp.me"))} vs ${JSON.stringify(B.store("hyp.me"))}`);
+
+  // And put it back for the share that follows.
+  await A.go("#/profile");
+  A.setVal(A.$("#meNameBox"), "Naomi");
+  A.click(A.$('[data-act="meSave"]'));
+  await sleep(300);
+}
 ok("a share has a link with its key in the fragment",
    /#\/p\?e=.+&k=[A-Za-z0-9_-]{40,}/.test(shareLink), shareLink.slice(0, 120));
 {
@@ -330,7 +371,7 @@ console.log("\n== a library on a plain static host ==");
 
   // Using the library writes records, and a record change is what would push.
   await S.go("#/item/" + encodeURIComponent(liked));
-  S.click(S.$("article .actions button.heart"));
+  S.click(S.$(".item .actions button.heart"));
   S.setVal(S.$("#noteText"), "Kept here.");
   S.click(S.$('[data-act="noteSave"]'));
   await sleep(300);
@@ -412,6 +453,159 @@ console.log("\n== an endpoint on the site's own origin ==");
   ok("...and said so, rather than silently", /served with one/.test(J.$("#lnkHint")?.textContent || ""),
      J.$("#lnkHint")?.textContent);
   ok("...but is still there to be read and changed", !!J.$("#lnkWhere"));
+}
+
+/* Pressing a button and seeing nothing move is the same complaint whether the
+   work failed or the page simply never said so. */
+console.log("\n== the sync line says what happened ==");
+{
+  await B.go("#/profile");
+  ok("both places that say it are marked the same way, not sharing an id",
+     B.$$(".syncline").length === 2 && !B.$("#syncLine"),
+     `${B.$$(".syncline").length} lines, ${B.$("#syncLine") ? "an id too" : "no id"}`);
+  B.click(B.$('[data-act="syncNow"]'));
+  const said = await waitFor(() =>
+    B.$$(".syncline").every(el => /Synced/.test(el.textContent)), 15000);
+  ok("pressing Sync now updates every one of them", said,
+     B.$$(".syncline").map(el => el.textContent).join(" | "));
+  ok("...and counts the devices it found",
+     /2 devices/.test(B.$(".syncline")?.textContent || ""), B.$(".syncline")?.textContent);
+  ok("...and the page redraws with the devices it saw", /last seen/.test(B.text()),
+     B.text().slice(0, 200));
+}
+
+console.log("\n== opening one of their playlists ==");
+{
+  const pl = (A.store("hyp.playlists") || [])[0];
+  await C.go("#/p");
+  const row = C.$$("ol.list li").find(li => /x/.test(li.textContent));
+  ok("their playlists are listed", !!row, C.text().slice(0, 200));
+  await C.go(`#/p/${encodeURIComponent(pl.id)}`);
+  ok("...and one of them opens on its own entries",
+     /entr(y|ies)/.test(C.text()) && /Play what we have/.test(C.text()),
+     C.text().slice(0, 200));
+  ok("...with a way back to whose it is", !!C.$("a.back"));
+  C.click(C.$('[data-act="sharedCopy"]'));
+  await sleep(200);
+  ok("...and a way to take a copy, named after them",
+     (C.store("hyp.playlists") || []).some(p => /\(Naomi\)/.test(p.name)),
+     JSON.stringify((C.store("hyp.playlists") || []).map(p => p.name)));
+}
+
+console.log("\n== keeping somebody's profile ==");
+{
+  await C.go("#/p");
+  C.click(C.$('[data-act="follow"]'));
+  const kept = await waitFor(() => (C.store("hyp.follows") || []).length === 1, 10000);
+  ok("a share can be kept", kept, JSON.stringify(C.store("hyp.follows")?.map(r => r.name)));
+  ok("...holding what the annotations need and not the whole profile",
+     !!C.store("hyp.follows")[0].favs && !C.store("hyp.follows")[0].titles,
+     Object.keys(C.store("hyp.follows")[0]).join(","));
+
+  C.click(C.$('[data-act="sharedClose"]'));
+  await sleep(200);
+  await C.go("#/item/" + encodeURIComponent(liked));
+  ok("the recording says who liked it", /Favourited by\s+Naomi/.test(C.text()),
+     C.text().slice(0, 300));
+  ok("...and which of their playlists it is in", /In playlists/.test(C.text()),
+     C.text().slice(0, 300));
+
+  // A creator is as worth knowing about as a recording, and the share carries
+  // both kinds of favourite.
+  await C.go("#/author/" + encodeURIComponent(firstPage[0].author));
+  ok("a creator they have favourited says so too",
+     /Favourited by\s+Naomi/.test(C.text()), C.text().slice(0, 240));
+  await C.go("#/authors");
+  await sleep(350);
+  ok("...and so does their card",
+     C.$$(".card .among1").some(el => /Naomi/.test(el.textContent)),
+     C.$$(".card .among1").map(el => el.textContent).join(" | ") || "no lines");
+
+  await C.go("#/");
+  await sleep(300);
+  const chip = C.$$('[data-act="facet"]').find(b => /^by:/.test(b.dataset.v));
+  ok("the Library filter gains one for them", !!chip, "no by: chip");
+  ok("...named after them", /Liked by Naomi/.test(chip?.textContent || ""), chip?.textContent);
+  C.click(chip);
+  await sleep(300);
+  ok("...and choosing it narrows to what they liked",
+     C.$$(".card").length === 1, `${C.$$(".card").length} cards`);
+
+  await C.go("#/profile");
+  ok("the profile page lists who is being kept", /Naomi/.test(C.text()),
+     C.text().slice(0, 200));
+  C.click(C.$('[data-act="unfollow"]'));
+  await sleep(300);
+  ok("and it can be given up again", (C.store("hyp.follows") || []).length === 0,
+     JSON.stringify(C.store("hyp.follows")));
+}
+
+/* A link that arrives somewhere the app cannot be handed it.
+
+   On iOS a home-screen app is never offered links to its own site, and it keeps
+   a different library from Safari besides, so a share link tapped in Messages
+   lands somewhere it is no use. Pasting it in has to work. */
+console.log("\n== a link carried in by hand ==");
+{
+  const K2 = await browser("K");
+  K2.click(K2.$('[data-act="pasteLink"]'));
+  await sleep(120);
+  ok("there is somewhere to paste one", !!K2.$("#pasteBox"));
+  K2.setVal(K2.$("#pasteBox"), "https://example.com/#/nonsense");
+  K2.click(K2.$('[data-act="pasteGo"]'));
+  await sleep(120);
+  ok("...which says so when it is not one",
+     /not a pairing code or a share link/.test(K2.$("#pasteWhy")?.textContent || ""),
+     K2.$("#pasteWhy")?.textContent);
+
+  K2.setVal(K2.$("#pasteBox"), shareLink);
+  K2.click(K2.$('[data-act="pasteGo"]'));
+  const opened = await waitFor(() => /Naomi/.test(K2.text()), 10000);
+  ok("...and opens a share pasted into it", opened, K2.text().slice(0, 120));
+  ok("...without the key ever reaching the address bar",
+     !/k=/.test(K2.window.location.hash), K2.window.location.hash);
+}
+
+/* A share is the library's, not the device it was made on. Last, because it
+   takes the share down and everything above reads it. */
+console.log("\n== a share reaches the other device ==");
+{
+  B.click(B.$('[data-act="syncNow"]'));
+  const arrived = await waitFor(() => (B.store("hyp.shares") || []).length === 1, 15000);
+  ok("the other device knows about the share", arrived,
+     JSON.stringify((B.store("hyp.shares") || []).map(r => r.label)));
+  await B.go("#/profile");
+  ok("...and lists it, with the same link", /choosing for me|Shared/.test(B.text()) &&
+     B.$(".sharelink")?.value === shareLink,
+     `${B.$(".sharelink")?.value?.slice(0, 40)} vs ${shareLink.slice(0, 40)}`);
+
+  // Revoking from the second device has to stick on the first, or the next sync
+  // republishes a link somebody was told had stopped working.
+  const slots = () => fs.existsSync(path.join(syncDir, "pf"))
+    ? fs.readdirSync(path.join(syncDir, "pf")) : [];
+  const before = slots();
+  B.click(B.$('[data-act="shareRevoke"]'));
+  await sleep(700);
+  ok("revoking from here takes it down", (B.store("hyp.shares") || []).length === 0,
+     B.doc.querySelector(".toast")?.textContent || "no word either way");
+  ok("...and is remembered as revoked",
+     Object.keys(B.store("hyp.shares.gone") || {}).length === 1,
+     JSON.stringify(B.store("hyp.shares.gone")));
+  A.click(A.$('[data-act="syncNow"]'));
+  const dropped = await waitFor(() => (A.store("hyp.shares") || []).length === 0, 15000);
+  ok("...so the device that made it lets it go too", dropped,
+     JSON.stringify(A.store("hyp.shares")));
+  // One slot fewer, and nobody has put it back: other shares on this endpoint
+  // belong to other libraries and are none of this test's business. The wait is
+  // longer than a push debounce, so a device that had not yet heard of the
+  // revocation has had its chance to undo it.
+  await sleep(7000);
+  A.click(A.$('[data-act="syncNow"]'));
+  await sleep(1500);
+  ok("...and the endpoint has let that one go, and only that one",
+     slots().length === before.length - 1 &&
+     slots().every(f => before.includes(f)),
+     `${before.join(",")} -> ${slots().join(",")}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

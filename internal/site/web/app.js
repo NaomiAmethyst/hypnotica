@@ -16,6 +16,11 @@ const K = {
   counters: "hyp.sync.counters",
   seen: "hyp.sync.seen",
   shares: "hyp.shares",
+  sharesGone: "hyp.shares.gone",
+  always: "hyp.always",
+  follows: "hyp.follows",
+  searches: "hyp.searches",
+  searchesGone: "hyp.searches.gone",
   me: "hyp.me",
   devices: "hyp.devices",
   names: "hyp.names",
@@ -210,7 +215,7 @@ const newListId = () => "pl" + Date.now().toString(36) + (listTick++).toString(3
 const Playlists = {
   all() { const v = load(K.playlists, []); return Array.isArray(v) ? v : []; },
   get(id) { return this.all().find(p => p.id === id); },
-  write(list) { save(K.playlists, list); Sync.soon(); },
+  write(list) { LIST_INDEX = null; save(K.playlists, list); Sync.soon(); },
   create(name, items = []) {
     const list = this.all();
     const pl = { id: newListId(), name: name || "Untitled playlist",
@@ -847,7 +852,7 @@ const TRANSFER = 1;
 
 const Share = {
   bundle({ playlists = null, favourites = false, notes = false, history = false,
-           secret = false, own = false } = {}) {
+           searches = false, secret = false, own = false } = {}) {
     const stamp = ms => (ms ? new Date(ms).toISOString() : "");
     const out = { hypnotica: TRANSFER, exported: nowISO() };
     if (DATA.site?.title) out.site = DATA.site.title;
@@ -880,6 +885,29 @@ const Share = {
       out.history = own ? History.plainOwn() : History.plain();
       for (const e of out.history.recent) seen.add(e.i);
       for (const id of Object.keys(out.history.plays)) seen.add(id);
+    }
+    if (searches) {
+      out.searches = Searches.all();
+      const gone = Searches.gone();
+      if (Object.keys(gone).length) out.searchesRemoved = gone;
+    }
+    /* The standing filter goes to this person's own devices and nowhere else.
+       It is a list of what somebody would rather not be shown, which is a thing
+       about them rather than about the library, and it has no business in a file
+       that gets sent to anybody. */
+    if (secret) {
+      out.always = { ...ALWAYS };
+      out.me = Me.read();
+      // A share is the library's, not the device that happened to publish it:
+      // rotating or revoking one from the phone is the same act as from the
+      // machine it was made on.
+      out.shares = Shares.all();
+      const goneShares = Shares.gone();
+      if (Object.keys(goneShares).length) out.sharesRemoved = goneShares;
+      // The links, not what was fetched with them: every device asks for itself,
+      // and a cached profile is somebody else's data to be holding twice.
+      out.follows = Followed.all().map(r => ({ id: r.id, endpoint: r.endpoint,
+                                               key: r.key, name: r.name, added: r.added }));
     }
     const names = {};
     for (const id of seen) { const n = Names.of(id); if (n) names[id] = n; }
@@ -923,6 +951,14 @@ const Share = {
       authorsGone: favBag(favGone.authors),
       notes: obj(raw.notes),
       names: obj(raw.names),
+      searches: Array.isArray(raw.searches) ? raw.searches : [],
+      searchesRemoved: obj(raw.searchesRemoved),
+      // Read, so a sync blob can hand them over; never applied by an import.
+      always: obj(raw.always),
+      me: obj(raw.me),
+      follows: Array.isArray(raw.follows) ? raw.follows : [],
+      shares: Array.isArray(raw.shares) ? raw.shares : [],
+      sharesRemoved: obj(raw.sharesRemoved),
       history: {
         recent: Array.isArray(hist.recent) ? hist.recent : [],
         plays: obj(hist.plays),
@@ -934,9 +970,9 @@ const Share = {
                     || Object.keys(out.history.forget).length || out.history.before;
     if (!out.playlists.length && !out.items.size && !out.authors.size
         && !out.itemsGone.size && !out.authorsGone.size
-        && !Object.keys(out.playlistsRemoved).length
+        && !Object.keys(out.playlistsRemoved).length && !out.searches.length
         && !Object.keys(out.notes).length && !anyHistory) {
-      throw new Error("No playlists, favourites, notes or history in that file.");
+      throw new Error("No playlists, favourites, notes, searches or history in that file.");
     }
     return out;
   },
@@ -947,7 +983,7 @@ const Share = {
      the name follows only if the file's copy was edited more recently. */
   merge(payload) {
     const report = { added: 0, updated: 0, items: 0, authors: 0, missing: 0,
-                     dropped: 0, lists: 0, notes: 0, events: 0 };
+                     dropped: 0, lists: 0, notes: 0, events: 0, searches: 0 };
     for (const [id, row] of Object.entries(payload.names || {})) Names.take(id, row);
 
     /* A playlist deleted elsewhere goes, unless it has been touched here since
@@ -1024,6 +1060,7 @@ const Share = {
     }
     Notes.write();
     report.events = History.take(payload.history || {});
+    report.searches = Searches.take(payload.searches, payload.searchesRemoved);
 
     report.missing = this.strangers(payload);
     return report;
@@ -1190,7 +1227,7 @@ const Sync = {
     const counter = Math.max(this.counter(k.group), mine ? mine.counter : 0) + 1;
     const text = JSON.stringify(Share.bundle({
       playlists: Playlists.all(), favourites: true, notes: true, history: true,
-      secret: true, own: true,
+      searches: true, secret: true, own: true,
     }));
     const env = await this.envelope(k, k.group, text, counter);
     await this.ask("PUT", `/sync/${k.group}/${k.device.fp}`, env);
@@ -1211,6 +1248,12 @@ const Sync = {
         const text = await openEnvelope(k.content, k.group, env);
         const payload = clampPayload(Share.parse(text), env.recv);
         Share.merge(payload);
+        // Only here. An imported file never sets what somebody would rather not
+        // be shown, nor what they are called; a device of their own may.
+        this.adoptAlways(payload.always);
+        if (Me.take(payload.me)) Shares.refresh().catch(() => {});
+        this.adoptFollows(payload.follows);
+        Shares.take(payload.shares, payload.sharesRemoved);
         this.sawAt(row.slot, row.counter);
         took++;
       } catch (e) {
@@ -1238,13 +1281,55 @@ const Sync = {
       this.state.devices = rows.length;
       this.state.at = Date.now();
       this.state.error = "";
-      if (took) render();
+      // The profile page is a picture of this: the device list, when each was
+      // last seen, the shares. Redrawn whether or not anything arrived, because
+      // "I pressed it and nothing moved" is the same complaint either way.
+      if (took || route().name === "profile") render();
     } catch (e) {
       this.state.error = String(e.message || e);
     } finally {
       this.state.busy = false;
       paintSync();
     }
+  },
+
+  /* The standing filter as another of this person's devices has it. Taken
+     whole rather than merged: it is one setting, and two devices disagreeing
+     about it should end with the one that spoke last, not with the union of
+     what either would rather not see. */
+  adoptAlways(next) {
+    if (!next || typeof next !== "object") return;
+    const mine = favTime(ALWAYS.updated), theirs = favTime(next.updated);
+    // Same rule as the name: newer wins, and a device that has never pinned
+    // anything takes what arrives rather than standing on an empty set.
+    if (theirs < mine) return;
+    if (theirs === mine && (alwaysCount() || ALWAYS.updated)) return;
+    for (const key of ["tags", "cats", "meta"]) {
+      const f = next[key] && typeof next[key] === "object" ? next[key] : {};
+      ALWAYS[key] = { any: [...(f.any || [])], all: [...(f.all || [])], not: [...(f.not || [])] };
+    }
+    ALWAYS.off = !!next.off;
+    ALWAYS.updated = next.updated || nowISO();
+    save(K.always, ALWAYS);
+  },
+
+  /* Links another device has kept. Added, never removed: a device that has not
+     synced since somebody stopped keeping one would otherwise put it back, and
+     the list is small enough that the cost of an extra one is a fetch. */
+  adoptFollows(rows) {
+    if (!Array.isArray(rows) || !rows.length) return;
+    const held = Followed.all(), byId = new Map(held.map(r => [r.id, r]));
+    let added = false;
+    for (const r of rows) {
+      if (!r || typeof r.id !== "string" || typeof r.key !== "string") continue;
+      if (byId.has(r.id) || held.length >= FOLLOW_MAX) continue;
+      held.push({ id: r.id, endpoint: r.endpoint, key: r.key,
+                  name: r.name || "Someone", added: r.added || nowISO(),
+                  fetched: "", favs: [], lists: [], plays: {} });
+      byId.set(r.id, true);
+      added = true;
+    }
+    if (added) { Followed.write(held); Followed.refresh().then(() => render()); }
   },
 
   /* The device list, kept from what the endpoint reports rather than from
@@ -1586,7 +1671,27 @@ const SHARE_PRESETS = {
 const Me = {
   read() { const v = load(K.me, null); return v && typeof v === "object" ? v : {}; },
   name() { return String(this.read().name || "").slice(0, 80); },
-  setName(v) { const m = this.read(); m.name = String(v || "").slice(0, 80); save(K.me, m); },
+  setName(v) {
+    const m = this.read();
+    m.name = String(v || "").slice(0, 80);
+    m.updated = nowISO();
+    save(K.me, m);
+    Sync.soon();
+  },
+  /* One name, not a merge of two. The newer stands, and where neither says when
+     -- both from before the times existed -- the same one is chosen on either
+     side, so two devices settle rather than swapping names for ever. */
+  take(next) {
+    if (!next || typeof next !== "object" || typeof next.name !== "string") return false;
+    const held = this.read();
+    const mine = favTime(held.updated), theirs = favTime(next.updated);
+    const win = theirs > mine
+      || (theirs === mine && !held.name && !held.updated)
+      || (theirs === mine && next.name > (held.name || ""));
+    if (!win || next.name === held.name) return false;
+    save(K.me, { name: next.name.slice(0, 80), updated: next.updated || nowISO() });
+    return true;
+  },
 };
 
 /* Half-finished, taken at the moment of publishing rather than kept as a record.
@@ -1653,7 +1758,7 @@ function profileDoc(sections) {
 
 const Shares = {
   all() { const v = load(K.shares, null); return Array.isArray(v) ? v : []; },
-  write(rows) { save(K.shares, rows); },
+  write(rows) { save(K.shares, rows); Sync.soon(); },
   get(id) { return this.all().find(r => r.id === id); },
 
   async create(label, sections) {
@@ -1662,18 +1767,30 @@ const Shares = {
     const row = { id, key: toB64u(sk), label: String(label || "Shared").slice(0, 80),
                   sections: [...sections], created: nowISO() };
     const rows = this.all(); rows.push(row); this.write(rows);
-    await this.publish(row);
+    await this.publish(row, true);
     return row;
   },
 
-  async publish(row) {
+  /* Republished only when what it says has changed.
+
+     Every sync used to write every share again, which is a write per share per
+     device per sync -- and a window in which a device that has not yet heard
+     about a revocation puts the slot back. */
+  async publish(row, force = false) {
     const k = await Keys.ready();
     if (!k) throw new Error("link a device first — a share needs somewhere to live");
+    const doc = profileDoc(row.sections);
+    const mark = markOf(JSON.stringify({ ...doc, published: "" }));
+    if (!force && row.mark === mark) return false;
     const sk = fromB64u(row.key);
     const content = await hkdf(sk, "hypnotica/profile-content");
     const read = await hkdf(sk, "hypnotica/profile-read");
-    const counter = Sync.counter(row.id) + 1;
-    const { n, ct } = await seal(content, JSON.stringify(profileDoc(row.sections)));
+    /* Time, not a tally. A device slot is written by one device and a count of
+       its own writes is enough; a share can be republished from any device in
+       the group, and two tallies kept separately both start at one. A clock in
+       milliseconds is monotonic where it matters and needs nothing shared. */
+    const counter = Math.max(Date.now(), Sync.counter(row.id) + 1);
+    const { n, ct } = await seal(content, JSON.stringify(doc));
     const env = { v: ENVELOPE, slot: k.device.fp, key: toB64(k.device.spki), counter,
                   written: nowISO(), n, ct,
                   sig: await signEnvelope(k.device, row.id, counter, fromB64(ct)) };
@@ -1681,16 +1798,67 @@ const Shares = {
       { "X-Hypnotica-Group": k.group });
     Sync.bump(row.id, counter);
     row.published = nowISO();
+    row.mark = mark;
     this.write(this.all().map(r => (r.id === row.id ? row : r)));
+    return true;
   },
 
+  /* A revoke that fails quietly is worse than one that fails: somebody is then
+     told the link is dead and goes on believing it. The row is kept where the
+     endpoint would not take it back, so it can be tried again. */
   async revoke(id) {
     const k = await Keys.ready();
     if (k) {
-      await Sync.ask("DELETE", `/profile/${id}`, undefined, { "X-Hypnotica-Group": k.group })
-        .catch(() => {});
+      await Sync.ask("DELETE", `/profile/${id}`, undefined, { "X-Hypnotica-Group": k.group });
     }
     this.write(this.all().filter(r => r.id !== id));
+    // Remembered as revoked. Without this the next device to sync still holds
+    // the row, republishes it on its own next pass, and the link somebody was
+    // told had stopped working starts working again.
+    const gone = this.gone(); gone[id] = nowISO(); this.writeGone(gone);
+  },
+
+  gone() {
+    const v = load(K.sharesGone, null);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  },
+  writeGone(gone) {
+    const cut = Date.now() - TOMB_DAYS * DAY;
+    for (const [id, t] of Object.entries(gone)) if (favTime(t) && favTime(t) < cut) delete gone[id];
+    save(K.sharesGone, gone);
+  },
+
+  /* Shares another of this person's devices published. Taken whole -- a share is
+     a key and a list of sections, not something two devices edit at once -- and
+     one revoked anywhere stays revoked. */
+  take(rows, removed) {
+    const held = this.all(), byId = new Map(held.map(r => [r.id, r]));
+    const gone = this.gone();
+    /* A revocation this device is hearing about for the first time. Whoever
+       hears of it takes the slot down, because the device that revoked it may
+       have done so while another was midway through putting it back: without
+       this, a link somebody was told was dead is alive again. */
+    const fresh = [];
+    for (const [id, when] of Object.entries(removed || {})) {
+      if (!gone[id]) fresh.push(id);
+      if (!gone[id] || favTime(gone[id]) < favTime(when)) gone[id] = when;
+    }
+    for (const id of fresh) {
+      Keys.ready().then(k => k && Sync.ask("DELETE", `/profile/${id}`, undefined,
+        { "X-Hypnotica-Group": k.group })).catch(() => {});
+    }
+    let n = 0;
+    for (const row of rows || []) {
+      if (!row || typeof row.id !== "string" || typeof row.key !== "string") continue;
+      if (favTime(gone[row.id]) > favTime(row.created)) continue;
+      const was = byId.get(row.id);
+      if (was && favTime(was.published || was.created) >= favTime(row.published || row.created)) continue;
+      if (was) Object.assign(was, row); else { held.push(row); byId.set(row.id, row); }
+      n++;
+    }
+    this.writeGone(gone);
+    this.write(held.filter(r => !(favTime(gone[r.id]) > favTime(r.created))));
+    return n;
   },
 
   /* A new key and a new address. The old link stops opening anything the moment
@@ -1704,7 +1872,11 @@ const Shares = {
 
   /* Republished when what it exposes has changed underneath it. */
   async refresh() {
-    for (const row of this.all()) await this.publish(row).catch(() => {});
+    const gone = this.gone();
+    for (const row of this.all()) {
+      if (favTime(gone[row.id])) continue;
+      await this.publish(row).catch(() => {});
+    }
   },
 
   link(row) {
@@ -1712,6 +1884,143 @@ const Shares = {
     return `${here}#/p?e=${encodeURIComponent(Sync.base())}&k=${row.key}`;
   },
 };
+
+/* People whose shares are kept.
+
+   A share link is read once and then usually lost. Keeping one means the library
+   can say, on the recording itself, that somebody you know has liked it, has it
+   in a list, or played it last March -- which is most of what the link was for.
+
+   What is kept is what the annotations need and nothing else: the ids, the list
+   names, the counts. The timeline, the notes and the titles are dropped on the
+   way in, because a dozen whole profiles do not fit anywhere sensible and none
+   of it is needed to answer "has Naomi heard this". */
+const FOLLOW_MAX = 12;
+let FOLLOW_INDEX = null;
+
+const Followed = {
+  all() { const v = load(K.follows, null); return Array.isArray(v) ? v : []; },
+  write(rows) { FOLLOW_INDEX = null; save(K.follows, rows); Sync.soon(); },
+  get(id) { return this.all().find(r => r.id === id); },
+  has(id) { return !!this.get(id); },
+
+  trim(got, endpoint, key) {
+    const d = got.doc, plays = {};
+    for (const [id, row] of Object.entries(d.history?.plays || {})) {
+      let n = 0;
+      for (const c of Object.values(row.c || {})) n += Number(c?.n) || 0;
+      if (n) plays[id] = { n, last: row.l || "" };
+    }
+    return {
+      id: got.id, endpoint, key,
+      name: d.profile?.name || "Someone",
+      fetched: nowISO(),
+      favs: Object.keys(d.favourites?.items || {}),
+      // A share carries both kinds of favourite and a creator is as worth
+      // knowing about as a recording: "Naomi likes everything this one makes"
+      // is the sort of thing somebody follows a profile to find out.
+      authorFavs: Object.keys(d.favourites?.authors || {}),
+      lists: (d.playlists || []).map(p => ({ name: p.name || "Playlist",
+                                             items: [...(p.items || [])] })),
+      plays,
+    };
+  },
+
+  async add(endpoint, key) {
+    const got = await fetchProfile(endpoint, key);
+    const rows = this.all();
+    if (!rows.some(r => r.id === got.id) && rows.length >= FOLLOW_MAX) {
+      throw new Error(`That is as many profiles as this keeps (${FOLLOW_MAX}).`);
+    }
+    const row = this.trim(got, endpoint, key);
+    const held = rows.find(r => r.id === got.id);
+    row.added = held?.added || nowISO();
+    this.write([...rows.filter(r => r.id !== got.id), row]);
+    return row;
+  },
+
+  remove(id) { this.write(this.all().filter(r => r.id !== id)); },
+
+  /* Asked again, quietly, whenever the library opens. A link that has been
+     revoked says so and stops being believed rather than going on asserting
+     what somebody liked a month ago. */
+  async refresh() {
+    const rows = this.all();
+    if (!rows.length) return 0;
+    let moved = 0;
+    for (let i = 0; i < rows.length; i++) {
+      try {
+        const got = await fetchProfile(rows[i].endpoint, rows[i].key);
+        rows[i] = { ...this.trim(got, rows[i].endpoint, rows[i].key), added: rows[i].added };
+        moved++;
+      } catch (e) {
+        rows[i] = { ...rows[i], gone: e.message || "that link did not open" };
+      }
+    }
+    this.write(rows);
+    return moved;
+  },
+};
+
+/* Sets rather than arrays, because the alternative is a linear scan per card
+   per person per redraw. Rebuilt whenever the list behind it is written. */
+function followIndex() {
+  if (FOLLOW_INDEX) return FOLLOW_INDEX;
+  FOLLOW_INDEX = Followed.all().filter(r => !r.gone).map(r => ({
+    id: r.id, name: r.name,
+    favs: new Set(r.favs || []),
+    authorFavs: new Set(r.authorFavs || []),
+    lists: (r.lists || []).map(l => ({ name: l.name, items: new Set(l.items || []) })),
+    plays: r.plays || {},
+  }));
+  return FOLLOW_INDEX;
+}
+
+/* What the people somebody follows have to say about one recording. */
+function followedFacts(id) {
+  const liked = [], listed = [], played = [];
+  for (const r of followIndex()) {
+    if (r.favs.has(id)) liked.push(r.name);
+    for (const l of r.lists) if (l.items.has(id)) listed.push({ list: l.name, who: r.name });
+    const p = r.plays[id];
+    if (p) played.push({ who: r.name, n: p.n, last: p.last });
+  }
+  played.sort((a, b) => (b.last || "").localeCompare(a.last || ""));
+  return { liked, listed, played };
+}
+
+/* The same question about a creator, which has one answer rather than three. */
+function followedAuthorLikes(id) {
+  return followIndex().filter(r => r.authorFavs.has(id)).map(r => r.name);
+}
+
+/* Shortened rather than wrapped: a card is a fixed thing in a grid, and three
+   names written out push everything under it down a line. */
+const few = names => (names.length > 2 ? `${names[0]} +${names.length - 1}` : andList(names));
+
+/* Which of somebody's own lists each recording is in.
+
+   Built once and kept until a playlist changes: a card asks this, and a grid
+   draws sixty of them at a time out of a blob that has to be parsed to answer. */
+let LIST_INDEX = null;
+function listIndex() {
+  if (LIST_INDEX) return LIST_INDEX;
+  LIST_INDEX = new Map();
+  for (const p of Playlists.all()) {
+    for (const id of p.items || []) {
+      const at = LIST_INDEX.get(id);
+      if (at) at.push(p.name); else LIST_INDEX.set(id, [p.name]);
+    }
+  }
+  return LIST_INDEX;
+}
+
+/* "Naomi, Sam and Kit" rather than "Naomi, Sam, Kit". */
+function andList(names) {
+  if (names.length <= 1) return names[0] || "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
 
 /* Reading somebody else's. The key in the link is the whole capability: it
    derives the address, the MAC that opens it, and the key that decrypts it. */
@@ -2272,26 +2581,108 @@ function saveFilters() { save(K.filters, F); }
   if (moved) saveFilters();
 })();
 
-function facetOf(key, v) { return MODES.find(m => F[key][m].includes(v)) || ""; }
-function setFacet(key, v, mode) {
-  for (const m of MODES) {
-    const i = F[key][m].indexOf(v);
-    if (i >= 0) F[key][m].splice(i, 1);
+/* A filter that outlives the search it was set in.
+
+   Some exclusions are not about this search, they are about what somebody wants
+   to be shown at all -- an audience they are not, a content warning they would
+   rather not meet. Setting those again on every search, and on every creator's
+   page, is the kind of thing people stop doing and then stop using the library.
+
+   So the same chips write to one of two places: the search being made now, or
+   the standing filter, which is applied on top of every search and every
+   creator's page and is not touched by Clear. It can be suspended without being
+   taken apart, because "let me see everything for a minute" is a different act
+   from "I did not mean any of this".
+
+   Made of the same chips the panels offer, and nothing else: duration and the
+   search box stay with the search they were typed into. */
+const ALWAYS = Object.assign(
+  { tags: emptyFacet(), cats: emptyFacet(), meta: emptyFacet(), off: false },
+  load(K.always, {}));
+for (const key of ["tags", "cats", "meta"]) {
+  const f = ALWAYS[key] && typeof ALWAYS[key] === "object" ? ALWAYS[key] : {};
+  ALWAYS[key] = { any: [...(f.any || [])], all: [...(f.all || [])], not: [...(f.not || [])] };
+}
+/* Stamped, because two devices can disagree about this and the answer wants to
+   be the one somebody set last rather than the one that happened to sync last. */
+function saveAlways() { ALWAYS.updated = nowISO(); save(K.always, ALWAYS); Sync.soon(); }
+
+const alwaysCount = () =>
+  ["tags", "cats", "meta"].reduce((n, k) => n + MODES.reduce((m, mode) => m + ALWAYS[k][mode].length, 0), 0);
+
+/* A name, or a set of pins, from before either carried a time.
+
+   Both resolve by asking which is newer, and two values with no time at all
+   compare equal -- so a device that set one before this existed would refuse
+   every other device's for ever, and quietly go on showing its own. Stamped
+   once, on the first load that knows to, which gives the comparison something
+   to compare. */
+(() => {
+  const me = load(K.me, null);
+  if (me && typeof me === "object" && me.name && !me.updated) {
+    save(K.me, { ...me, updated: nowISO() });
   }
-  if (mode) { F[key][mode].push(v); F[key][mode].sort((a, b) => a.localeCompare(b)); }
-  saveFilters();
+  if (!ALWAYS.updated && alwaysCount()) {
+    ALWAYS.updated = nowISO();
+    save(K.always, ALWAYS);
+  }
+})();
+const alwaysOn = () => !ALWAYS.off && alwaysCount() > 0;
+
+/* A chosen value lives in one of the two and never in both: the search being
+   made now, or the pinned set that outlives it. Which one it is in is the whole
+   difference, and the pin on its chip is how it is moved. */
+const isPinned = (key, v) => MODES.some(m => ALWAYS[key][m].includes(v));
+const facetWhere = (key, v) => (isPinned(key, v) ? ALWAYS : F);
+
+function facetOf(key, v) {
+  const home = facetWhere(key, v);
+  return MODES.find(m => home[key][m].includes(v)) || "";
+}
+function pull(home, key, v) {
+  for (const m of MODES) {
+    const i = home[key][m].indexOf(v);
+    if (i >= 0) home[key][m].splice(i, 1);
+  }
+}
+function setFacet(key, v, mode) {
+  const home = facetWhere(key, v);
+  pull(home, key, v);
+  if (mode) { home[key][mode].push(v); home[key][mode].sort((a, b) => a.localeCompare(b)); }
+  if (home === ALWAYS) saveAlways(); else saveFilters();
+}
+
+/* The pin, and the only way across. The mode comes with it: something excluded
+   for this search and then pinned is excluded from now on, which is what
+   pressing a pin on a chip that says "not" plainly means. */
+function togglePin(key, v) {
+  const mode = facetOf(key, v);
+  if (!mode) return;
+  const from = facetWhere(key, v), to = from === ALWAYS ? F : ALWAYS;
+  pull(from, key, v);
+  to[key][mode].push(v);
+  to[key][mode].sort((a, b) => a.localeCompare(b));
+  saveAlways(); saveFilters();
 }
 function cycleFacet(key, v, back = false) {
   const ring = ["", "any", "all", "not"];
   const i = ring.indexOf(facetOf(key, v));
   setFacet(key, v, ring[(i + (back ? ring.length - 1 : 1)) % ring.length]);
 }
+/* Everything chosen in a section, from both stores, each saying which it is in.
+   Pinned last: they are the standing part, and reading them after the search's
+   own is the order somebody thinks in. */
 function facetChosen(key, kind) {
-  const all = MODES.flatMap(m => F[key][m].map(v => [m, v]));
-  return kind ? all.filter(([, v]) => tagKind(v) === kind) : all;
+  const from = (home, pinned) =>
+    MODES.flatMap(m => home[key][m].map(v => ({ m, v, pinned })));
+  const all = [...from(F, false), ...from(ALWAYS, true)];
+  return kind ? all.filter(c => tagKind(c.v) === kind) : all;
 }
 /* Clearing is per section, so wiping the content tags cannot silently drop a
    standing audience exclusion the reader set months ago. */
+/* Clearing is per section, and never reaches a pinned choice: those are the ones
+   somebody set once so they would not have to think about them again, and a
+   button that tidies up this search has no business taking them away. */
 function clearFacet(key, kind) {
   if (!kind) { F[key] = emptyFacet(); saveFilters(); return; }
   for (const m of MODES) F[key][m] = F[key][m].filter(v => tagKind(v) !== kind);
@@ -2323,15 +2714,32 @@ const META_WHY = {
   favourite: "Liked.",
   playlist: "In at least one playlist here.",
 };
-const metaLabel = v => META_LABEL[v] || v;
+/* The four this library knows about itself, then one for each person whose
+   share is kept: "liked by Naomi" is the same kind of question as "liked", and
+   wants the same any/all/not. */
+const metaKeys = () => [...META_KEYS, ...followIndex().map(r => "by:" + r.id)];
+const metaWho = v => (v.startsWith("by:") ? followIndex().find(r => "by:" + r.id === v) : null);
+const metaLabel = v => {
+  const who = metaWho(v);
+  return who ? `Liked by ${who.name}` : META_LABEL[v] || v;
+};
+const metaWhy = v => {
+  const who = metaWho(v);
+  return who ? `In the favourites of ${who.name}, as their share last had it.`
+             : META_WHY[v] || "";
+};
 
 function metaSets() {
   const theirs = VIEWING && VIEWING.sets;
-  if (theirs) return theirs;
-  return { played: History.playedIds(), note: new Set(Notes.ids()),
-           favourite: new Set(Favourites.ids("item")), playlist: Playlists.itemIds() };
+  const out = theirs || { played: History.playedIds(), note: new Set(Notes.ids()),
+                          favourite: new Set(Favourites.ids("item")),
+                          playlist: Playlists.itemIds() };
+  for (const r of followIndex()) out["by:" + r.id] = r.favs;
+  return out;
 }
-function metaOf(it, sets) { return META_KEYS.filter(k => sets[k].has(it.id)); }
+function metaOf(it, sets) {
+  return metaKeys().filter(k => sets[k] && sets[k].has(it.id));
+}
 const facetActive = f => !!(f && (f.any.length || f.all.length || f.not.length));
 
 function matchFacet(have, f) {
@@ -2410,7 +2818,9 @@ function refreshTranscriptHits() {
   transcriptHits(q.split(/\s+/)).then(hits => {
     if (trQuery !== q) return;            // a newer query overtook this one
     TR_HITS = hits;
-    render();
+    // Lands while somebody is still typing, so it takes the same narrow path a
+    // keystroke does rather than rebuilding the box under them.
+    refilter();
   });
 }
 
@@ -2706,6 +3116,50 @@ function writeUp(d, it, gen) {
     ${genMark(gen, "summary")}</div>` : "";
 }
 
+/* What the people whose shares are kept have to say about this one.
+
+   Three different facts, and worth keeping apart: liking something, putting it
+   in a list, and having actually played it are not the same claim. */
+function followedPanel(id) {
+  // Somebody's own lists first, and unqualified: "In playlists: Sleep, Deep
+  // (Naomi)" reads as one answer to one question, which is what it is. Nothing
+  // else on the page says a recording is in a list of yours at all.
+  const mine = listIndex().get(id) || [];
+  const { liked, listed, played } = followedFacts(id);
+  if (!mine.length && !liked.length && !listed.length && !played.length) return "";
+  const lists = [...mine, ...listed.map(l => `${l.list} (${l.who})`)];
+  const theirs = liked.length || listed.length || played.length;
+  return `<div class="among">
+    ${lists.length ? `<p><b>In playlists</b> ${esc(andList(lists))}</p>` : ""}
+    ${liked.length ? `<p><b>Favourited by</b> ${esc(andList(liked))}</p>` : ""}
+    ${played.map(p => `<p><b>${esc(p.who)}</b> played it ${
+      p.n === 1 ? "once" : `${p.n} times`}${
+      p.last ? `, last ${esc(dayLabel(p.last).toLowerCase())}` : ""}</p>`).join("")}
+    ${theirs ? `<p class="note">The people whose shares you keep, as those last
+      stood.</p>` : ""}
+  </div>`;
+}
+
+/* The same, small enough for a card: which lists it is in, who liked it, and
+   whether anybody has actually played it. */
+function followedMark(id) {
+  const mine = listIndex().get(id) || [];
+  const { liked, listed, played } = followedFacts(id);
+  if (!mine.length && !liked.length && !listed.length && !played.length) return "";
+  const lists = [...mine, ...listed.map(l => `${l.list} (${l.who})`)];
+  const bits = [];
+  if (liked.length) bits.push(`♥ ${few(liked)}`);
+  if (lists.length) bits.push(`in ${few(lists)}`);
+  if (played.length) bits.push(`played by ${few(played.map(p => p.who))}`);
+  return `<p class="among1">${esc(bits.join(" · "))}</p>`;
+}
+
+/* And the same on a creator, where the only question is who likes them. */
+function followedAuthorMark(id) {
+  const liked = followedAuthorLikes(id);
+  return liked.length ? `<p class="among1">♥ ${esc(few(liked))}</p>` : "";
+}
+
 /* What this device has heard of it. Shown only once there is something to say,
    because "played 0 times" is a sentence about nothing. */
 function playedLine(id) {
@@ -2760,14 +3214,57 @@ function authorName(id) { return DATA.authors.find(a => a.id === id)?.name || id
 
 /* `skip` leaves one facet out, which is what the per-tag match counts need:
    a count is "how many results would this tag give me", not "how many now". */
+/* The standing filter, as a test over one item. Not applied while it is the
+   thing being edited: a chip cannot be chosen out of a list it has already
+   removed from the page. */
+function alwaysKeeps(it, sets) {
+  if (!matchFacet(it.tags, ALWAYS.tags)) return false;
+  if (!matchFacet(it.categories, ALWAYS.cats)) return false;
+  if (sets && !matchFacet(metaOf(it, sets), ALWAYS.meta)) return false;
+  return true;
+}
+const standingApplies = () => alwaysOn();
+
+/* What a list of items looks like once the standing filter has had it. Used by
+   every surface that browses rather than collects: the library and a creator's
+   page. A playlist, the favourites and the queue are things somebody put
+   something into on purpose, and quietly taking it out again would be worse
+   than showing it. */
+function alwaysKeep(rows) {
+  if (!standingApplies()) return rows;
+  const sets = facetActive(ALWAYS.meta) ? metaSets() : null;
+  return rows.filter(it => alwaysKeeps(it, sets));
+}
+
+/* One pass per distinct question, not one per panel.
+
+   Nine facet panels ask `filtered(key)` for their counts, and eight of them ask
+   the same question -- every tag kind skips "tags". On a library of ten thousand
+   that was ten walks of the whole catalogue for one keystroke, which is what
+   made typing feel like wading. Nothing mutates a filter in the middle of a
+   render, so the answers hold for the length of one. */
+let PASS = null;
+const startPass = () => { PASS = new Map(); };
+const endPass = () => { PASS = null; };
+
 function filtered(skip = "") {
+  if (PASS && PASS.has(skip)) return PASS.get(skip);
+  const rows = computeFiltered(skip);
+  if (PASS) PASS.set(skip, rows);
+  return rows;
+}
+
+function computeFiltered(skip = "") {
   const q = F.q.trim().toLowerCase();
   const terms = q ? q.split(/\s+/) : [];
   // Built once per pass and only when something asks for it: the sets behind it
   // are read out of storage, which is not work to do per card.
-  const meta = skip !== "meta" && facetActive(F.meta) ? metaSets() : null;
+  const wantsMeta = facetActive(F.meta) || (standingApplies() && facetActive(ALWAYS.meta));
+  const meta = skip !== "meta" && wantsMeta ? metaSets() : null;
+  const standing = standingApplies();
   let rows = DATA.items.filter(it => {
     if (F.author && it.author !== F.author) return false;
+    if (standing && !alwaysKeeps(it, meta)) return false;
     if (skip !== "tags" && !matchFacet(it.tags, F.tags)) return false;
     if (skip !== "cats" && !matchFacet(it.categories, F.cats)) return false;
     if (meta && !matchFacet(metaOf(it, meta), F.meta)) return false;
@@ -2800,6 +3297,70 @@ function route() {
   const [head, ...rest] = h.split("/");
   return { name: head || "library", arg: decodeURIComponent(rest.join("/") || ""), params };
 }
+
+function openShare(where, key) {
+  VIEWING = { key, endpoint: where, doc: null, sets: null };
+  fetchProfile(where, key).then(got => {
+    VIEWING = { key, endpoint: where, id: got.id, doc: got.doc, sets: null };
+    VIEWING.sets = sharedSets();
+    render();
+  }).catch(e => { VIEWING = { key, endpoint: where, error: e.message }; render(); });
+}
+
+/* A link that arrived somewhere else.
+
+   On iOS an app added to the home screen is not offered links to its own site --
+   there is no manifest member or association file that changes this -- so a
+   pairing code or a share link tapped in Messages opens Safari, which holds a
+   different library with different storage. Nothing the page can do makes the
+   link land in the app; what it can do is take one that is pasted in, which
+   turns "this cannot be used here" into one extra step.
+
+   It also never touches the address bar, so the key is not in the history even
+   briefly. */
+function takeLink(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return "Nothing pasted.";
+  let hash = "";
+  if (raw.startsWith("#")) hash = raw;
+  else {
+    try { hash = new URL(raw).hash; }
+    catch { hash = raw.includes("#") ? raw.slice(raw.indexOf("#")) : ""; }
+  }
+  const inner = hash.replace(/^#\/?/, "");
+  const cut = inner.indexOf("?");
+  const name = cut < 0 ? inner : inner.slice(0, cut);
+  const params = new URLSearchParams(cut < 0 ? "" : inner.slice(cut + 1));
+  if (name === "link" && params.get("p") && params.get("k")) {
+    LINKING = { endpoint: params.get("e") || Sync.base(), id: params.get("p"),
+                key: fromB64u(params.get("k")) };
+    go("/link"); render();
+    return "";
+  }
+  if (name === "p" && params.get("k")) {
+    openShare(params.get("e") || Sync.base(), params.get("k"));
+    go("/p"); render();
+    return "";
+  }
+  return "That is not a pairing code or a share link.";
+}
+
+function pasteLink() {
+  transferDialog("Paste a link",
+    `<p class="note">A pairing code or a share link somebody has given you. Useful where
+      a link opens in the browser rather than here — on iOS an app added to the home
+      screen is never offered links to its own site, and the two keep separate
+      libraries.</p>
+     <textarea id="pasteBox" rows="3" aria-label="Link"
+       placeholder="https://…#/p?e=…&amp;k=…"></textarea>
+     <p class="note" id="pasteWhy">&nbsp;</p>`,
+    `<button class="btn" data-act="ioClose">Cancel</button>
+     <button class="btn primary" data-act="pasteGo">Open it</button>`);
+}
+
+/* An app on the home screen on iOS says so, and only there. Safari says false;
+   everything else says nothing at all. */
+const iosBrowser = () => navigator.standalone === false;
 
 /* Taken out of the address bar as soon as it is in hand. A key left in the hash
    is a key in the history, in the next screenshot, and in whatever the browser
@@ -2853,14 +3414,8 @@ function render() {
     consume("link");
   }
   if (r.name === "p" && r.params.get("k")) {
-    const key = r.params.get("k"), where = r.params.get("e") || Sync.base();
-    VIEWING = { key, endpoint: where, doc: null, sets: null };
+    openShare(r.params.get("e") || Sync.base(), r.params.get("k"));
     consume("p");
-    fetchProfile(where, key).then(got => {
-      VIEWING = { key, endpoint: where, doc: got.doc, sets: null };
-      VIEWING.sets = sharedSets();
-      render();
-    }).catch(e => { VIEWING = { key, endpoint: where, error: e.message }; render(); });
   }
   const mark = CURRENT_ROUTE === null ? null : scrollMark();
   if (moved && CURRENT_ROUTE) SCROLL.set(CURRENT_ROUTE, mark);
@@ -2881,7 +3436,12 @@ function render() {
   if (r.name === "author" && r.arg && !DETAIL.has(r.arg)) loadDetail(r.arg).then(render);
   if (r.name === "library" && F.q) { loadSearch(); refreshTranscriptHits(); }
   Grid.stop();
-  main.innerHTML = (views[r.name] || viewLibrary)(r.arg);
+  startPass();
+  try {
+    main.innerHTML = (views[r.name] || viewLibrary)(r.arg);
+  } finally {
+    endPass();
+  }
   if (r.name === "library" || r.name === "author" || r.name === "favourites") {
     Grid.start(LAST_ROWS);
   } else if (r.name === "authors") {
@@ -2961,6 +3521,73 @@ async function paintStorage() {
 /* Kept as a name: every redraw now holds the reader's place and their caret,
    so a filter click is an ordinary render. */
 function rerender() { render(); }
+
+/* Typing does not rebuild the page.
+
+   Redrawing everything on a keystroke meant the search box itself was destroyed
+   and made again between letters: the caret had to be put back, and anything
+   typed while the browser was busy landed on an element that was no longer in
+   the document. What a search actually changes is the results, the count and the
+   facet counts -- so those are what it redraws, and the box somebody is typing
+   into is left alone. */
+function refilter() {
+  if (route().name !== "library") { rerender(); return; }
+  const main = $("#main");
+  if (!main || !main.querySelector(".controls")) { rerender(); return; }
+  // The facet column is replaced, and a panel's own find-box may be in it.
+  const active = document.activeElement;
+  const held = active && active.id && main.contains(active)
+    ? { id: active.id, value: active.value,
+        caret: typeof active.selectionStart === "number"
+          ? [active.selectionStart, active.selectionEnd] : null }
+    : null;
+  startPass();
+  try {
+    const rows = collapseVariants(filtered());
+    LAST_ROWS = rows;
+    const count = main.querySelector(".count");
+    if (count) {
+      const folded = rows.reduce((n, r) => n + (r._cuts ? r._cuts - 1 : 0), 0);
+      const head = count.firstChild;
+      const text = `${rows.length} of ${DATA.items.length}${
+        folded ? ` · ${folded} alternate cut(s) folded in` : ""} `;
+      if (head && head.nodeType === 3) head.nodeValue = text;
+    }
+    const facets = main.querySelector(".facets");
+    if (facets) {
+      facets.innerHTML = facetBar() + facetPanels();
+      for (const d of facets.querySelectorAll("details.facet")) {
+        d.addEventListener("toggle", () => { FOPEN[d.dataset.panel] = d.open; });
+      }
+    }
+    const saved = main.querySelector(".saved");
+    if (saved) saved.outerHTML = savedRow();
+    Grid.stop();
+    const grid = main.querySelector("#grid");
+    if (rows.length && grid) Grid.start(rows);
+    else rerenderGridArea(main, rows);
+  } finally {
+    endPass();
+  }
+  if (held && !document.getElementById(held.id)?.isSameNode(active)) {
+    const back = document.getElementById(held.id);
+    if (back) {
+      back.focus({ preventScroll: true });
+      if (typeof back.value === "string" && back.value !== held.value) back.value = held.value;
+      if (held.caret && typeof back.setSelectionRange === "function") {
+        try { back.setSelectionRange(held.caret[0], held.caret[1]); } catch { /* not text */ }
+      }
+    }
+  }
+}
+
+/* The one case the in-place update cannot do: a result set that has just become
+   empty, or just stopped being empty, changes which element is there at all. */
+function rerenderGridArea(main, rows) {
+  const grid = main.querySelector("#grid"), empty = main.querySelector(".empty");
+  if (rows.length && !grid) { rerender(); return; }
+  if (!rows.length && !empty) { rerender(); return; }
+}
 
 /* Triggers and compulsions say what a recording will do to you, which is the one
    thing a browser of a hypnosis library may not want spoiled in a grid. */
@@ -3207,7 +3834,7 @@ function card(it) {
         ${it.hasTranscript ? `<span class="pill">transcript</span>` : ""}
         ${off ? `<span class="pill ok">offline</span>` : q ? `<span class="pill">queued</span>` : ""}
       </div>
-      ${VIEWING ? sharedMark(it.id) : ""}
+      ${VIEWING ? sharedMark(it.id) : followedMark(it.id)}
       ${itemBlurb(it) ? `<p class="note blurb">${esc(itemBlurb(it))}</p>` : ""}
       <div class="tags">${chips(cardTags(it))}
         ${hiddenTagCount(it) ? `<span class="tag f-none"
@@ -3223,6 +3850,123 @@ function card(it) {
     </div></div>`;
 }
 
+/* Searches somebody meant to come back to.
+
+   A filter that took six clicks to build is a filter nobody rebuilds; they
+   either keep the tab open or stop using it. A saved search is the whole search
+   -- the words, the chips, the sort, the duration -- under a name, and applying
+   one replaces the search being made without touching the standing filter. */
+const Searches = {
+  all() { const v = load(K.searches, null); return Array.isArray(v) ? v : []; },
+  write(rows) { save(K.searches, rows); Sync.soon(); },
+  get(id) { return this.all().find(r => r.id === id); },
+  snapshot() {
+    const copy = f => ({ any: [...f.any], all: [...f.all], not: [...f.not] });
+    return { q: F.q, author: F.author, sort: F.sort, spoil: !!F.spoil, tr: !!F.tr,
+             off: !!F.off, dur: { min: F.dur.min, max: F.dur.max },
+             tags: copy(F.tags), cats: copy(F.cats), meta: copy(F.meta) };
+  },
+  add(name) {
+    const rows = this.all();
+    const row = { id: newListId(), name: String(name || "Search").slice(0, 60),
+                  created: nowISO(), find: this.snapshot() };
+    rows.push(row); this.write(rows);
+    return row;
+  },
+  apply(id) {
+    const row = this.get(id);
+    if (!row || !row.find) return false;
+    const f = row.find;
+    // Written into the object every view already holds rather than replacing it.
+    F.q = String(f.q || ""); F.author = String(f.author || "");
+    F.sort = String(f.sort || "date");
+    F.spoil = !!f.spoil; F.tr = !!f.tr; F.off = !!f.off;
+    F.dur = { min: f.dur?.min ?? "", max: f.dur?.max ?? "" };
+    for (const key of ["tags", "cats", "meta"]) {
+      const held = f[key] && typeof f[key] === "object" ? f[key] : {};
+      F[key] = { any: [...(held.any || [])], all: [...(held.all || [])], not: [...(held.not || [])] };
+    }
+    saveFilters();
+    return true;
+  },
+  /* Remembered as forgotten, so another device does not hand it back. The same
+     shape a deleted playlist uses, for the same reason. */
+  remove(id) {
+    this.write(this.all().filter(r => r.id !== id));
+    const gone = this.gone(); gone[id] = nowISO(); this.writeGone(gone);
+  },
+  gone() {
+    const v = load(K.searchesGone, null);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  },
+  writeGone(gone) {
+    const cut = Date.now() - TOMB_DAYS * DAY;
+    for (const [id, t] of Object.entries(gone)) if (favTime(t) && favTime(t) < cut) delete gone[id];
+    save(K.searchesGone, gone);
+  },
+  take(rows, removed) {
+    const held = this.all(), byId = new Map(held.map(r => [r.id, r]));
+    const gone = this.gone();
+    let n = 0;
+    for (const [id, when] of Object.entries(removed || {})) {
+      if (!gone[id] || favTime(gone[id]) < favTime(when)) gone[id] = when;
+    }
+    for (const row of rows || []) {
+      if (!row || typeof row !== "object" || typeof row.id !== "string") continue;
+      if (favTime(gone[row.id]) > favTime(row.created)) continue;   // forgotten since
+      const was = byId.get(row.id);
+      if (was && favTime(was.created) >= favTime(row.created)) continue;
+      if (was) Object.assign(was, row); else { held.push(row); byId.set(row.id, row); }
+      n++;
+    }
+    this.writeGone(gone);
+    this.write(held.filter(r => !(favTime(gone[r.id]) > favTime(r.created))));
+    return n;
+  },
+};
+
+/* Enough of a fingerprint to tell "this is what is already published" from
+   "this is not". Not a secure hash and not asked to be one: it compares a
+   string with itself, and runs where crypto.subtle may not exist. */
+function markOf(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/* What a saved search holds, in words, for the thing somebody hovers before
+   pressing it. */
+function searchWords(row) {
+  const f = row.find || {};
+  const bits = [];
+  if (f.q) bits.push(`“${f.q}”`);
+  for (const key of ["tags", "cats", "meta"]) {
+    for (const m of MODES) {
+      for (const v of (f[key] || {})[m] || []) {
+        bits.push(`${MODE_LABEL[m]} ${key === "meta" ? metaLabel(v) : tagValue(v)}`);
+      }
+    }
+  }
+  if (f.author) bits.push(authorName(f.author));
+  if (f.dur?.min || f.dur?.max) bits.push(`${f.dur.min || "0"}–${f.dur.max || "∞"} min`);
+  if (f.off) bits.push("offline only");
+  return bits.length ? bits.join(" · ") : "everything";
+}
+
+function savedRow() {
+  const rows = Searches.all();
+  return `<div class="saved">
+    <button class="btn sm" data-act="searchSave">Save this search</button>
+    ${rows.map(r => `<span class="tag k-meta saved1" data-act="searchApply"
+      data-id="${esc(r.id)}" role="button" tabindex="0"
+      title="${esc(searchWords(r))}">${esc(r.name)}<i data-act="searchDrop"
+      data-id="${esc(r.id)}" title="Forget this search">✕</i></span>`).join("")}
+  </div>`;
+}
+
 /* Panel state that must survive the re-render every chip click triggers.
    Keyed by section: "tags:audience", "tags:content", "cats". */
 const FQ = {};
@@ -3233,6 +3977,11 @@ function facetPanel(key, kind, label, field, note) {
   const chosen = facetChosen(key, kind);
   const belongs = kind ? (v => tagKind(v) === kind) : (() => true);
 
+  /* Counted against the search being made -- "how many would this give me" --
+     except while the standing filter is what is being set, where the answer is
+     about the whole library. Counting those against the current search would
+     hide the very chip somebody is reaching for: you cannot exclude an audience
+     for ever from a page that is not showing it at the moment. */
   const counts = new Map();
   for (const it of filtered(key)) for (const v of it[field]) counts.set(v, (counts.get(v) || 0) + 1);
 
@@ -3241,6 +3990,7 @@ function facetPanel(key, kind, label, field, note) {
     .sort((a, b) => tagValue(a).localeCompare(tagValue(b)));
   if (!all.length) return "";
 
+  const loose = chosen.filter(c => !c.pinned).length;
   const q = (FQ[id] || "").trim().toLowerCase();
   const matching = q ? all.filter(v => v.toLowerCase().includes(q)) : all;
 
@@ -3268,7 +4018,12 @@ function facetPanel(key, kind, label, field, note) {
     ["3 to 50", n => n > 2],
     ["1 or 2", n => n > 0],
   ];
-  const left = matching.filter(v => (counts.get(v) || 0) > 0 || facetOf(key, v));
+  /* A tag matching nothing is dropped, unless it is already chosen -- it has to
+     stay reachable to be un-chosen -- or unless somebody has typed its name,
+     which is an explicit request for that one. Without that last case a value
+     absent from the current results cannot be selected, and therefore cannot be
+     pinned, which is exactly when somebody wants to pin it. */
+  const left = matching.filter(v => (counts.get(v) || 0) > 0 || facetOf(key, v) || q);
   const groups = [];
   let rest = left;
   for (const [name, holds] of bands) {
@@ -3276,7 +4031,7 @@ function facetPanel(key, kind, label, field, note) {
     rest = rest.filter(v => !holds(counts.get(v) || 0));
     if (mine.length) groups.push([name, mine]);
   }
-  if (rest.length) groups.push(["Chosen, matching nothing", rest]);
+  if (rest.length) groups.push([q ? "Matching nothing right now" : "Chosen, matching nothing", rest]);
 
   const body = groups.map(([name, values]) =>
     `<div class="band"><h4>${esc(name)}<i>${values.length}</i></h4>
@@ -3290,8 +4045,8 @@ function facetPanel(key, kind, label, field, note) {
         ${all.length > 24 ? `<input class="fq" id="fq-${esc(id)}" type="search"
           placeholder="Find ${esc(label.toLowerCase())}…" value="${esc(FQ[id] || "")}">` : ""}
         <button class="btn sm" data-act="facetClear" data-key="${esc(key)}"
-          data-kind="${esc(kind || "")}"${chosen.length ? "" : " disabled"}
-          >Clear${chosen.length ? ` (${chosen.length})` : ""}</button>
+          data-kind="${esc(kind || "")}"${loose ? "" : " disabled"}
+          >Clear${loose ? ` (${loose})` : ""}</button>
       </div>
       <p class="note">Click to cycle: <b class="f-any">any</b> (at least one) →
         <b class="f-all">all</b> (required) → <b class="f-not">not</b> (excluded) → off.
@@ -3314,34 +4069,46 @@ function metaPanel() {
     const st = facetOf("meta", v), n = counts[v] || 0;
     return `<button class="tag k-meta${st ? " f-" + st : ""}${n ? "" : " f-none"}"
       data-act="facet" data-key="meta" data-v="${esc(v)}"
-      title="${esc(`${META_WHY[v]} — ${n} match${n === 1 ? "" : "es"}`)}"
+      title="${esc(`${metaWhy(v)} — ${n} match${n === 1 ? "" : "es"}`)}"
       >${esc(metaLabel(v))}<i>${n}</i></button>`;
   };
   const whose = VIEWING ? `what ${esc(VIEWING.doc?.profile?.name || "they")} has done with it`
                         : "what you have done with it";
   return `<details class="facet" data-panel="meta"${FOPEN.meta ? " open" : ""}>
     <summary>Library${chosen.length ? `<span class="cnt">${chosen.length}</span>` : ""}
-      <span class="note">${whose} · ${META_KEYS.length}</span></summary>
+      <span class="note">${whose} · ${metaKeys().length}</span></summary>
     <div class="fbody">
       <div class="frow">
         <button class="btn sm" data-act="facetClear" data-key="meta" data-kind=""${
-          chosen.length ? "" : " disabled"}>Clear${
-          chosen.length ? ` (${chosen.length})` : ""}</button>
+          chosen.filter(c => !c.pinned).length ? "" : " disabled"}>Clear${
+          chosen.filter(c => !c.pinned).length ? ` (${chosen.filter(c => !c.pinned).length})` : ""
+        }</button>
       </div>
       <p class="note">Click to cycle: <b class="f-any">any</b> (at least one) →
         <b class="f-all">all</b> (required) → <b class="f-not">not</b> (excluded) → off.
         Alt-click steps backwards. Nothing here leaves the device.</p>
-      <div class="band"><div class="tags">${META_KEYS.map(chip).join("")}</div></div>
+      <div class="band"><div class="tags">${metaKeys().map(chip).join("")}</div></div>
     </div></details>`;
 }
 
+/* A pushpin, drawn rather than borrowed from a font: the glyphs that look like
+   one are emoji, and this sits inside a chip at eight pixels. */
+const PIN = `<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"
+  ><path d="M6 .8a2.9 2.9 0 0 1 1.2 5.5l.5 4.9H4.3l.5-4.9A2.9 2.9 0 0 1 6 .8z"/></svg>`;
+
+/* What is chosen, in the sections it was chosen from, each chip carrying the pin
+   that decides whether it belongs to this search or to every search.
+   
+   A pinned chip has no ✕ and Clear does not reach it. Taking one off is
+   unpinning it first, which is one more press than an ordinary chip needs and
+   exactly the point: these are the ones somebody meant to stop thinking about. */
 function facetBar() {
   const sections = [
     ...KINDS.map(k => ["tags", k.key, k.label, !!k.spoiler]),
     ["cats", null, "Categories", false],
     ["meta", null, "Library", false],
   ];
-  return sections.map(([key, kind, label, spoiler]) => {
+  const rows = sections.map(([key, kind, label, spoiler]) => {
     const chosen = facetChosen(key, kind);
     if (!chosen.length) return "";
     if (spoiler && !F.spoil) {
@@ -3349,14 +4116,34 @@ function facetBar() {
         <span class="note">${chosen.length} hidden — tick “show triggers”</span></div>`;
     }
     const mine = key === "meta";
+    const loose = chosen.filter(c => !c.pinned).length;
     return `<div class="fsel"><span class="note">${esc(label)}:</span>
-      ${chosen.map(([m, v]) => `<button class="tag ${
-        mine ? "k-meta" : `k-${esc(tagKind(v))}`} f-${m}" data-act="facetOff"
-        data-key="${esc(key)}" data-v="${esc(v)}" title="Remove"
-        >${MODE_LABEL[m]} · ${esc(mine ? metaLabel(v) : tagValue(v))} ✕</button>`).join("")}
+      ${chosen.map(c => `<span class="tag ${
+        mine ? "k-meta" : `k-${esc(tagKind(c.v))}`} f-${c.m} chip${c.pinned ? " pinned" : ""}">
+        <button class="pin" data-act="facetPin" data-key="${esc(key)}" data-v="${esc(c.v)}"
+          aria-pressed="${c.pinned}" title="${c.pinned
+            ? "Pinned to every search — press to unpin"
+            : "Pin to every search"}">${PIN}</button>
+        <span class="lab">${MODE_LABEL[c.m]} · ${esc(mine ? metaLabel(c.v) : tagValue(c.v))}</span>
+        ${c.pinned ? "" : `<button class="off" data-act="facetOff" data-key="${esc(key)}"
+          data-v="${esc(c.v)}" title="Remove">✕</button>`}
+      </span>`).join("")}
       <button class="btn sm" data-act="facetClear" data-key="${esc(key)}"
-        data-kind="${esc(kind || "")}">Clear</button></div>`;
+        data-kind="${esc(kind || "")}"${loose ? "" : " disabled"}>Clear</button></div>`;
   }).join("");
+  return rows ? pinLine() + rows : "";
+}
+
+/* Said once, above the chips, and no larger than it needs to be: the pins on
+   the chips are already saying which ones. */
+function pinLine(hidden) {
+  const n = alwaysCount();
+  if (!n) return "";
+  const asleep = ALWAYS.off;
+  return `<p class="pinline${asleep ? " asleep" : ""}">${PIN}
+    <span>${asleep ? "Pinned filters are suspended" : `${n} pinned, on every search`}${
+      hidden ? ` · ${hidden} hidden here` : ""}</span>
+    <button class="btn sm" data-act="alwaysSuspend">${asleep ? "Resume" : "Suspend"}</button></p>`;
 }
 
 function facetPanels() {
@@ -3650,6 +4437,10 @@ const Grid = {
     this.draw = draw || card;
     this.el = document.getElementById("grid");
     if (!this.el) return;
+    // The container is start's to own. It used to be handed a fresh one every
+    // time because the whole view was rebuilt first; a redraw that replaces only
+    // the results hands back the one that still holds the last set.
+    this.el.innerHTML = "";
     this.chunks = [];
     this.append();
     this.sentinel = document.getElementById("gridEnd");
@@ -3771,6 +4562,7 @@ function viewLibrary() {
         id="fDurMax" type="number" min="0" step="5" placeholder="max"
         value="${esc(F.dur.max)}" aria-label="Longest, in minutes"></span>
   </div>
+  ${savedRow()}
   <div class="facets">
     ${facetBar()}
     ${facetPanels()}
@@ -3836,6 +4628,7 @@ function authorCard(a) {
     >${a.image ? `<img loading="lazy" src="${esc(a.image)}" alt="">` : ""}</a>
     <div class="body"><h3><a href="#/author/${encodeURIComponent(a.id)}">${esc(a.name)}</a></h3>
     <div class="meta"><span>${n} file${n === 1 ? "" : "s"}</span></div>
+    ${followedAuthorMark(a.id)}
     ${blurb ? `<p class="note blurb">${esc(blurb)}</p>` : ""}
     <div class="tags">${chips(authorCardTags(a.id))}</div>
     <div class="cardacts">${heart("author", a.id)}</div></div></div>`;
@@ -3871,8 +4664,10 @@ function viewAuthors() {
 function viewAuthor(id) {
   const a = DATA.authors.find(x => x.id === id);
   if (!a) return `<div class="empty">Unknown author.</div>`;
-  const rows = (BY_AUTHOR.get(id) || []).slice()
+  const held = BY_AUTHOR.get(id) || [];
+  const rows = alwaysKeep(held).slice()
     .sort((x, y) => (y.date || "").localeCompare(x.date || ""));
+  const hidden = held.length - rows.length;
   // The same windowed grid the library uses. A prolific creator has hundreds of
   // recordings, and drawing all of them at once costs what drawing the whole
   // library at once cost -- the reason the window exists.
@@ -3894,6 +4689,13 @@ function viewAuthor(id) {
       </div>
     </div>
   </div>
+  ${pinLine(hidden)}
+  ${(() => {
+    const liked = followedAuthorLikes(id);
+    return liked.length ? `<div class="among"><p><b>Favourited by</b>
+      ${esc(andList(liked))}</p>
+      <p class="note">The people whose shares you keep, as those last stood.</p></div>` : "";
+  })()}
   ${authorWriteUp(a)}
   ${(() => {
     const common = authorCommonTags(id);
@@ -3967,9 +4769,17 @@ function viewItem(id) {
   const a = DATA.authors.find(x => x.id === it.author);
   const off = Offline.has(it), q = Offline.isQueued(it.id);
   const gen = genOf(it), d = detailOf(it);
-  return `<article>
+  /* Not <article>.
+  
+     An item page is a player, a pile of metadata and a transcript, and Safari's
+     Reader takes an <article> as an invitation: it offers itself, throws away
+     the player and the panels, and leaves something unusable. There is no
+     supported way to say "not this page" -- the heuristic is Apple's and has no
+     opt-out -- so the honest thing is not to claim to be an article. A section
+     with a name says the same thing to a screen reader. */
+  return `<section class="item" aria-labelledby="itemTitle">
     <a class="back" href="#/">← Library</a>
-    <h1>${esc(it.title)}${genMark(gen, "title")}</h1>
+    <h1 id="itemTitle">${esc(it.title)}${genMark(gen, "title")}</h1>
     ${d.originalTitle ? `<p class="wasnamed">Filed under
       <span>${esc(d.originalTitle)}</span> when it arrived</p>` : ""}
     ${variantOf(it) ? `<p class="variant big">${esc(variantOf(it))}</p>` : ""}
@@ -3999,6 +4809,7 @@ function viewItem(id) {
       ${heart("item", it.id, { label: true })}
     </div>
     ${playedLine(it.id)}
+    ${followedPanel(it.id)}
     ${writeUp(d, it, gen)}
     ${notePanel(it.id)}
     ${cutsPanel(it)}
@@ -4028,7 +4839,7 @@ function viewItem(id) {
       <div id="trBody"><p class="note">Loading…</p></div></details>` : ""}
     ${soundPanel(d.sound, d.acoustic)}
     ${provPanel(gen, d.coverPrompts, "entry")}
-  </article>`;
+  </section>`;
 }
 
 /* Everything liked, in the order it was liked, creators before recordings --
@@ -4181,9 +4992,13 @@ function syncLine() {
   return `Synced ${esc(timeLabel(new Date(st.at).toISOString()))} · ${
     st.devices} device${st.devices === 1 ? "" : "s"}`;
 }
+/* Every one of them. The line appears twice -- in the menu and on the profile
+   page -- and while both carried the same id only the first was ever found, so
+   the one somebody was actually looking at sat there saying "not yet synced"
+   however many times they pressed the button. */
 function paintSync() {
-  const el = $("#syncLine");
-  if (el) el.textContent = syncLine();
+  const words = syncLine();
+  for (const el of $$(".syncline")) el.textContent = words;
 }
 
 /* The menu in the corner: everything that is about the person rather than the
@@ -4220,12 +5035,50 @@ function paintMe() {
     <div class="mesep"></div>
     <button class="melink" data-act="exportAny">Export…</button>
     <button class="melink" data-act="importAny">Import…</button>
+    <button class="melink" data-act="pasteLink">Paste a link…</button>
     <div class="mesep"></div>
     ${linked
-      ? `<p class="note" id="syncLine">${esc(syncLine())}</p>
+      ? `<p class="note syncline">${esc(syncLine())}</p>
          <button class="melink" data-act="syncNow">Sync now</button>`
       : `<button class="melink" data-act="linkStart">Link a device…</button>`}`;
 }
+
+/* Long-pressing a chip is the pin, for a finger: a target eight pixels across is
+   not one, and holding something down to change what it means is the gesture a
+   phone already teaches.
+
+   The press that follows is swallowed, because the element under it has been
+   redrawn by then and whatever is now in its place did not ask to be pressed. */
+const HOLD_MS = 500;
+let HOLD = null, HELD_AT = 0;
+
+function dropHold() {
+  if (!HOLD) return;
+  clearTimeout(HOLD.timer);
+  HOLD = null;
+}
+document.addEventListener("pointerdown", e => {
+  const chip = e.target.closest?.(".fsel .chip");
+  if (!chip || e.target.closest(".off")) return;
+  const owner = chip.querySelector("[data-key][data-v]");
+  if (!owner) return;
+  const { key, v } = owner.dataset;
+  dropHold();
+  HOLD = {
+    x: e.clientX || 0, y: e.clientY || 0,
+    timer: setTimeout(() => {
+      HOLD = null; HELD_AT = Date.now();
+      togglePin(key, v);
+      rerender();
+    }, HOLD_MS),
+  };
+});
+document.addEventListener("pointerup", dropHold);
+document.addEventListener("pointercancel", dropHold);
+document.addEventListener("pointermove", e => {
+  if (!HOLD) return;
+  if (Math.abs((e.clientX || 0) - HOLD.x) + Math.abs((e.clientY || 0) - HOLD.y) > 8) dropHold();
+});
 
 /* A menu that stays open behind the page it opened is a menu somebody has to
    close twice. Anything chosen inside one closes it, and so does anywhere else.
@@ -4292,8 +5145,24 @@ function viewProfile() {
   ${linked && !shares.length ? `<div class="empty">No shares yet.</div>` : ""}
   ${shares.length ? `<ol class="list shares">${shares.map(shareRow).join("")}</ol>` : ""}
 
+  <h3>People you keep</h3>
+  ${Followed.all().length ? `<p class="note">Shares you have been given and kept. Their
+    favourites, playlists and play counts annotate recordings here, and each one adds a
+    “Liked by” to the Library filter. They are asked again when the library opens.</p>
+    <div class="actions"><button class="btn" data-act="followRefresh">Ask again now</button></div>
+    <ol class="list">${Followed.all().map(r => `<li>
+      <div class="t"><b>${esc(r.name)}</b>
+        <span>${r.gone ? `<span class="warn">${esc(r.gone)}</span>`
+          : `${(r.favs || []).length} favourite${(r.favs || []).length === 1 ? "" : "s"} · ${
+             (r.lists || []).length} playlist${(r.lists || []).length === 1 ? "" : "s"} · asked ${
+             esc(dayLabel(r.fetched).toLowerCase())}`}</span></div>
+      <div class="g"><button data-act="unfollow" data-id="${esc(r.id)}"
+        title="Stop keeping this">✕</button></div></li>`).join("")}</ol>`
+    : `<div class="empty">None yet. Open a share link somebody has given you and press
+      “Keep this profile”.</div>`}
+
   <h3>Devices</h3>
-  ${linked ? `<p class="note" id="syncLine">${esc(syncLine())}</p>
+  ${linked ? `<p class="note syncline">${esc(syncLine())}</p>
     <div class="actions">
       <button class="btn" data-act="linkStart">Link another device…</button>
       <button class="btn" data-act="syncNow">Sync now</button>
@@ -4412,12 +5281,46 @@ function sharedTitle(id) {
   return { title: n ? n.t : id, who: n ? n.a : "", item: null };
 }
 
-function viewShared() {
+/* One of their playlists, opened. The entries this library does not have are
+   still listed by name: a playlist is a thing somebody put together, and showing
+   it four short without saying so would misrepresent it. */
+function viewSharedPlaylist(id) {
+  const d = VIEWING.doc;
+  const pl = (d.playlists || []).find(p => p.id === id);
+  if (!pl) return `<a class="back" href="#/p">← Back</a>
+    <div class="empty">That playlist is not in this share any more.</div>`;
+  const items = (pl.items || []).map(iid => ({ iid, ...sharedTitle(iid) }));
+  const here = items.filter(x => x.item);
+  const secs = here.reduce((n, x) => n + (x.item.duration || 0), 0);
+  return `<a class="back" href="#/p">← ${esc(d.profile?.name || "Back")}</a>
+  <h1>${esc(pl.name || "Playlist")}</h1>
+  <p class="kv">${items.length} entr${items.length === 1 ? "y" : "ies"}${
+    secs ? ` · ${fmtDur(secs)}` : ""}${
+    items.length - here.length ? ` · ${items.length - here.length} not in this library` : ""}</p>
+  <div class="actions">
+    ${here.length ? `<button class="btn primary" data-act="sharedPlay"
+      data-id="${esc(pl.id)}">▶ Play what we have</button>
+    <button class="btn" data-act="sharedQueue" data-id="${esc(pl.id)}">Add to queue</button>
+    <button class="btn" data-act="sharedCopy" data-id="${esc(pl.id)}">Copy to my playlists</button>` : ""}
+  </div>
+  ${items.length ? `<ol class="list">${items.map((x, n) => `<li>
+    <span class="n">${n + 1}</span>
+    <div class="t"><b>${x.item ? `<a href="#/item/${encodeURIComponent(x.iid)}"
+      style="text-decoration:none;color:inherit">${esc(x.title)}</a>` : esc(x.title)}</b>
+      <span>${x.who ? esc(x.who) : ""}${x.item && x.item.duration
+        ? ` · ${fmtDur(x.item.duration)}` : ""}${x.item ? "" : " · not in this library"}</span></div>
+    ${x.item ? `<div class="g"><button data-act="play" data-id="${esc(x.iid)}"
+      title="Play">▶</button></div>` : ""}</li>`).join("")}</ol>`
+    : `<div class="empty">This playlist is empty.</div>`}`;
+}
+
+function viewShared(arg) {
   if (!VIEWING) {
     return `<div class="empty">That link has nothing in it. Ask for it again.</div>`;
   }
   if (VIEWING.error) return `<div class="empty">${esc(VIEWING.error)}</div>`;
   if (!VIEWING.doc) return `<div class="empty">Opening…</div>`;
+  if (arg) return viewSharedPlaylist(arg);
   const d = VIEWING.doc;
   const who = d.profile?.name || "Someone";
   const favs = Object.keys(d.favourites?.items || {});
@@ -4434,22 +5337,37 @@ function viewShared() {
     to share, read here and changed nowhere.</p>
   <div class="actions">
     <a class="btn primary" href="#/">Browse the library with this</a>
+    ${VIEWING.id && Followed.has(VIEWING.id)
+      ? `<button class="btn" data-act="unfollow" data-id="${esc(VIEWING.id)}">Stop keeping this</button>`
+      : `<button class="btn" data-act="follow">Keep this profile</button>`}
     <button class="btn" data-act="sharedImport">Import to mine</button>
     <button class="btn" data-act="sharedClose">Close</button>
   </div>
+  ${VIEWING.id && Followed.has(VIEWING.id) ? `<p class="note">Kept. Recordings will say
+    where ${esc(who)} has liked, listed or played them, and the Library filter gains
+    “Liked by ${esc(who)}”. Nothing of yours goes back to them.</p>` : ""}
   <p class="note">Browsing shows what they have heard on every card, and the Library
     filter reads from this rather than from your own. Importing copies what is here into
     your library; nothing you do goes back to them.</p>
+  ${iosBrowser() ? `<p class="note">Reading this in the browser. An app added to your
+    home screen keeps its own library and is never handed links to this site, so to use
+    this there: <button class="link" data-act="shareCopyHere">copy the link</button>,
+    open the app, and paste it under “Paste a link”.</p>` : ""}
   ${progress.length ? `<h3>Part-way through</h3>${sharedList(progress, "")}` : ""}
   ${recent.length ? `<h3>Lately</h3>${sharedList(recent.slice(0, 20), "")}` : ""}
   ${ranked.length ? `<h3>Most played</h3>${sharedList(ranked, "")}` : ""}
   ${favs.length ? `<h3>Favourites</h3>${sharedList(favs.slice(0, 40), "")}` : ""}
   ${(d.playlists || []).length ? `<h3>Playlists</h3>
     <ol class="list">${d.playlists.map(p => `<li>
-      <div class="t"><b>${esc(p.name || "Playlist")}</b>
-        <span>${(p.items || []).length} entries</span></div>
-      <div class="g"><button data-act="sharedPlay" data-id="${esc(p.id)}"
-        title="Play what this library has">▶</button></div></li>`).join("")}</ol>` : ""}
+      <div class="t"><b><a href="#/p/${encodeURIComponent(p.id)}"
+        style="text-decoration:none;color:inherit">${esc(p.name || "Playlist")}</a></b>
+        <span>${(p.items || []).length} entr${
+          (p.items || []).length === 1 ? "y" : "ies"}</span></div>
+      <div class="g">
+        <button data-act="sharedPlay" data-id="${esc(p.id)}"
+          title="Play what this library has">▶</button>
+        <a class="open" href="#/p/${encodeURIComponent(p.id)}" title="Open it">›</a>
+      </div></li>`).join("")}</ol>` : ""}
   ${notes.length ? `<h3>Notes</h3><ol class="list notes">${notes.map(([id, n]) => {
     const { title } = sharedTitle(id);
     return `<li><div class="t"><b>${esc(title)}</b>
@@ -4766,6 +5684,7 @@ function openExport(pre = {}) {
     playlists: Playlists.all().length > 0,
     notes: Notes.ids().length > 0,
     history: History.events().length > 0,
+    searches: Searches.all().length > 0,
   };
   const row = (k, label, hint) => `<label class="exprow">
     <input type="checkbox" data-sec="${k}"${(pre[k] ?? (k === "favourites" || k === "playlists")) && held[k] ? " checked" : ""}${held[k] ? "" : " disabled"}>
@@ -4777,7 +5696,10 @@ function openExport(pre = {}) {
      ${row("playlists", "Playlists", "every list, and what has been taken out of them")}
      ${row("notes", "Notes", "what you have written against recordings")}
      ${row("history", "History", "what was played, when, and how often")}
-     <p class="note">A note marked private is left out whatever is ticked here.</p>`,
+     ${row("searches", "Saved searches", "the searches you have given names to")}
+     <p class="note">A note marked private is left out whatever is ticked here, and the
+       standing filter is in none of this: it goes to your own devices and nowhere
+       else.</p>`,
     `<button class="btn" data-act="ioClose">Cancel</button>
      <button class="btn primary" id="ioExportGo">Export</button>`);
 }
@@ -4813,6 +5735,7 @@ function runImport(text) {
   if (favs) bits.push(`${favs} favourite${favs === 1 ? "" : "s"}`);
   if (r.notes) bits.push(`${r.notes} note${r.notes === 1 ? "" : "s"}`);
   if (r.events) bits.push(`${r.events} sitting${r.events === 1 ? "" : "s"}`);
+  if (r.searches) bits.push(`${r.searches} saved search${r.searches === 1 ? "" : "es"}`);
   // Removals are counted separately and said out loud. A merge that takes
   // something away has to be as visible as one that adds.
   const away = [];
@@ -5069,6 +5992,7 @@ function askPlaylist(ids) {
 function idsOf(nodeIds) { return nodeIds.filter(x => BY_ID.get(x)?.audio); }
 
 document.addEventListener("click", e => {
+  if (Date.now() - HELD_AT < 400) return;      // the press that ended a long one
   const t = e.target.closest("[data-act],[data-pick],button,select");
   if (!t) return;
   const act = t.dataset?.act;
@@ -5088,6 +6012,19 @@ document.addEventListener("click", e => {
       if (route().name !== "library") go("/"); else rerender();
       return; }
     case "facet": cycleFacet(t.dataset.key, t.dataset.v, e.altKey); rerender(); return;
+    case "facetPin": togglePin(t.dataset.key, t.dataset.v); rerender(); return;
+    case "alwaysSuspend": ALWAYS.off = !ALWAYS.off; saveAlways(); rerender(); return;
+    case "searchSave": {
+      const n = prompt("Call this search", F.q.trim() || "Saved search");
+      if (!n) return;
+      Searches.add(n); toast("Search saved"); rerender(); return; }
+    case "searchApply":
+      if (Searches.apply(t.dataset.id)) rerender();
+      return;
+    case "searchDrop": {
+      const row = Searches.get(t.dataset.id);
+      if (!row || !confirm(`Forget “${row.name}”?`)) return;
+      Searches.remove(t.dataset.id); rerender(); return; }
     case "facetOff": setFacet(t.dataset.key, t.dataset.v, ""); rerender(); return;
     case "facetClear": clearFacet(t.dataset.key, t.dataset.kind || null); rerender(); return;
     case "play": Player.play([cardId]); return;
@@ -5104,9 +6041,12 @@ document.addEventListener("click", e => {
     case "qplay1": Player.play([t.dataset.id]); return;
     case "seek": Player.el.currentTime = +t.dataset.t;
                  if (Player.el.paused) Player.el.play().catch(() => {}); return;
-    case "playAuthor": Player.play(idsOf((BY_AUTHOR.get(t.dataset.author) || []).map(i => i.id))); return;
-    case "queueAuthor": Player.enqueue(idsOf((BY_AUTHOR.get(t.dataset.author) || []).map(i => i.id))); return;
-    case "saveAuthor": Offline.addMany((BY_AUTHOR.get(t.dataset.author) || []).map(i => i.id)); return;
+    /* Play all means all of what is on the page. Queueing something the
+       standing filter took off it would be the filter failing at the one moment
+       it matters most. */
+    case "playAuthor": Player.play(idsOf(alwaysKeep(BY_AUTHOR.get(t.dataset.author) || []).map(i => i.id))); return;
+    case "queueAuthor": Player.enqueue(idsOf(alwaysKeep(BY_AUTHOR.get(t.dataset.author) || []).map(i => i.id))); return;
+    case "saveAuthor": Offline.addMany(alwaysKeep(BY_AUTHOR.get(t.dataset.author) || []).map(i => i.id)); return;
     case "qplay": Player.load(+t.dataset.i, true); return;
     case "qup": Player.moveAt(+t.dataset.i, -1); return;
     case "qdown": Player.moveAt(+t.dataset.i, 1); return;
@@ -5185,7 +6125,7 @@ document.addEventListener("click", e => {
       return;
     case "meSave":
       Me.setName($("#meNameBox")?.value || "");
-      Shares.refresh();
+      Shares.refresh().catch(() => {});
       toast("Saved"); render(); return;
 
     case "shareNew": shareStart(t.dataset.preset); return;
@@ -5200,7 +6140,9 @@ document.addEventListener("click", e => {
       return;
     case "shareRevoke":
       if (!confirm("Revoke this share? The link stops opening anything.")) return;
-      Shares.revoke(t.dataset.id).then(() => { toast("Revoked"); render(); });
+      Shares.revoke(t.dataset.id)
+        .then(() => { toast("Revoked"); render(); })
+        .catch(e => toast(`Not revoked: ${e.message || e}`));
       return;
     case "deviceDrop": {
       const held = load(K.devices, {}) || {};
@@ -5210,6 +6152,19 @@ document.addEventListener("click", e => {
         .catch(() => {}).then(() => render());
       return; }
 
+    case "follow":
+      if (!VIEWING) return;
+      Followed.add(VIEWING.endpoint, VIEWING.key)
+        .then(row => { VIEWING.id = row.id; toast(`Keeping ${row.name}`); render(); })
+        .catch(e => toast(e.message || "could not keep that one"));
+      return;
+    case "unfollow":
+      Followed.remove(t.dataset.id);
+      toast("Stopped keeping it"); render(); return;
+    case "followRefresh":
+      toast("Asking again…");
+      Followed.refresh().then(() => { toast("Up to date"); render(); });
+      return;
     case "sharedImport": importShared(); return;
     case "sharedOpen": go("/p"); return;
     case "sharedClose": VIEWING = null; toast("Closed"); render(); return;
@@ -5217,8 +6172,34 @@ document.addEventListener("click", e => {
       const pl = (VIEWING?.doc?.playlists || []).find(p => p.id === t.dataset.id);
       if (pl) Player.play(idsOf(pl.items || []));
       return; }
+    case "sharedQueue": {
+      const pl = (VIEWING?.doc?.playlists || []).find(p => p.id === t.dataset.id);
+      if (pl) Player.enqueue(idsOf(pl.items || []));
+      return; }
+    /* Copied whole, ids this library does not know included: it may gain them,
+       and a playlist that arrives four entries short is not the one they made. */
+    case "sharedCopy": {
+      const pl = (VIEWING?.doc?.playlists || []).find(p => p.id === t.dataset.id);
+      if (!pl) return;
+      const who = VIEWING?.doc?.profile?.name;
+      Playlists.create(who ? `${pl.name} (${who})` : pl.name, pl.items || []);
+      toast("Copied to your playlists");
+      return; }
     case "exportAny": openExport({}); return;
     case "importAny": openImport(); return;
+    case "pasteLink": pasteLink(); return;
+    case "pasteGo": {
+      const why = takeLink($("#pasteBox")?.value || "");
+      if (!why) { $("#ioDlg")?.close(); return; }
+      const line = $("#pasteWhy");
+      if (line) line.textContent = why;
+      return; }
+    case "shareCopyHere": {
+      if (!VIEWING) return;
+      const here = `${location.origin}${location.pathname}#/p?e=${
+        encodeURIComponent(VIEWING.endpoint)}&k=${VIEWING.key}`;
+      navigator.clipboard?.writeText(here).then(() => toast("Link copied"), () => {});
+      return; }
   }
 
   switch (t.id) {
@@ -5254,6 +6235,7 @@ document.addEventListener("click", e => {
       exportBundle("library", Share.bundle({
         playlists: want.playlists ? Playlists.all() : null,
         favourites: !!want.favourites, notes: !!want.notes, history: !!want.history,
+        searches: !!want.searches,
       }));
       break; }
     case "histPause": History.setPaused(!History.paused()); render(); break;
@@ -5290,20 +6272,20 @@ document.addEventListener("input", async e => {
     searchTimer = setTimeout(async () => {
       F.q = v; saveFilters();
       refreshTranscriptHits();
-      rerender();
+      refilter();
     }, 180);
     return;
   }
   if (t.id.startsWith("fq-")) {
     clearTimeout(facetTimer);
     const id = t.id.slice(3), v = t.value;
-    facetTimer = setTimeout(() => { FQ[id] = v; rerender(); }, 140);
+    facetTimer = setTimeout(() => { FQ[id] = v; refilter(); }, 140);
     return;
   }
   if (t.id === "fDurMin" || t.id === "fDurMax") {
     clearTimeout(facetTimer);
     const which = t.id === "fDurMin" ? "min" : "max", v = t.value;
-    facetTimer = setTimeout(() => { F.dur[which] = v; saveFilters(); rerender(); }, 220);
+    facetTimer = setTimeout(() => { F.dur[which] = v; saveFilters(); refilter(); }, 220);
     return;
   }
   if (t.id === "pSeek") { Player.seek(t.value / 1000); return; }
@@ -5400,6 +6382,9 @@ async function boot() {
   // A linked library catches up once the catalogue is in hand, so what arrives
   // has something to be merged against.
   if (Sync.on()) Sync.run();
+  // And the shares somebody keeps are asked again, quietly: a revoked one should
+  // stop asserting what its owner liked a month ago.
+  if (Followed.all().length) Followed.refresh().then(n => n && render()).catch(() => {});
   // Now ask the build what it has. Anything whose hash has not moved is left
   // alone; a page that changed replaces its own entries and nothing else.
   syncCatalog(stored);

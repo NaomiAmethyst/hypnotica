@@ -7,7 +7,11 @@
 <meta name="description" content="__DESCRIPTION__">
 <meta name="theme-color" content="__THEME__">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Not black-translucent: that runs the page under the status bar, and the
+     clock is drawn in white over whatever is there. On a light theme that is a
+     white clock on a near-white header, and on any theme it lands on top of the
+     bar. "default" has the system keep the strip and start the page below it. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="__TITLE__">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="style.css?v=__BUILD_ID__">

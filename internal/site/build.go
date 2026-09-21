@@ -163,7 +163,6 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 			kind, ref, path string
 			out             *string
 		}{{"cover", i.Cover, i.CoverPath, &i.OutCover}, {"audio", i.Audio, i.AudioPath, &i.OutAudio}, {"video", i.Video, i.VideoPath, &i.OutVideo}} {
-			mp.step()
 			stem := "media/" + asset.kind + "/" + author + "/" + i.ID
 			claim(stem, asset.ref, asset.path)
 			if asset.path == "" {
@@ -205,6 +204,10 @@ func Build(c Config, o BuildOptions) (*BuildResult, error) {
 				}
 			}
 		}
+		// One step per recording, not per asset slot: the total is a count of
+		// items, and stepping inside the loop over cover, audio and video ran
+		// it to three times that -- mostly over slots no item had anything in.
+		mp.step()
 	}
 	if c.Media != "none" {
 		mp.finish("media (%s)", c.Media)

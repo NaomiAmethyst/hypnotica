@@ -160,7 +160,7 @@ console.log("\n== item view ==");
 const target = index.items.find(i => i.hasTranscript && i.audio && i.cover);
 window.location.hash = `#/item/${encodeURIComponent(target.id)}`;
 await sleep(200);
-ok("item h1", $("article h1")?.textContent === target.title, $("article h1")?.textContent);
+ok("item h1", $(".item h1")?.textContent === target.title, $(".item h1")?.textContent);
 ok("hero image", !!$("img.hero"));
 ok("write-up rendered", ($(".prose")?.innerHTML.length || 0) > 50);
 ok("play button", !!$('[data-act="playOne"]'));
@@ -213,6 +213,37 @@ await sleep(100);
 const after = JSON.parse(window.localStorage.getItem("hyp.playlists"))[0].items.length;
 ok("playlist item removal persists", after === before - 1, `${before} -> ${after}`);
 
+/* A recording says which of your own lists it is in. Nothing else on the page
+   does, and it was the half of this that got left out. */
+{
+  const held = JSON.parse(window.localStorage.getItem("hyp.playlists"))[0];
+  const inIt = held.items[0];
+  window.location.hash = `#/item/${encodeURIComponent(inIt)}`;
+  await sleep(250);
+  ok("an item in one of your playlists says so",
+     /In playlists/.test($(".among")?.textContent || ""), $(".among")?.textContent || "no panel");
+  ok("...by name", new RegExp(held.name).test($(".among")?.textContent || ""),
+     $(".among")?.textContent);
+  ok("...and says nothing about anybody else, since nobody is being kept",
+     !/shares you keep/.test($(".among")?.textContent || ""), $(".among")?.textContent);
+  const out = index.items.find(i => !held.items.includes(i.id));
+  window.location.hash = `#/item/${encodeURIComponent(out.id)}`;
+  await sleep(250);
+  ok("...and one that is in none of them says nothing", !$(".among"));
+
+  // And the same on the card, where it has to be short enough to fit.
+  window.location.hash = "#/";
+  await sleep(350);
+  const onCard = $$(".card").find(c => c.dataset.id === inIt);
+  ok("a card says which of your lists it is in",
+     /in /.test(onCard?.querySelector(".among1")?.textContent || ""),
+     onCard?.querySelector(".among1")?.textContent || "no line");
+  ok("...by name", new RegExp(held.name).test(onCard?.querySelector(".among1")?.textContent || ""));
+  const outCard = $$(".card").find(c => c.dataset.id === out.id);
+  ok("...and a card in none of them carries no line",
+     !outCard?.querySelector(".among1"));
+}
+
 console.log("\n== favourites ==");
 const favs = () => JSON.parse(window.localStorage.getItem("hyp.favourites") || "{}");
 window.location.hash = "#/";
@@ -237,10 +268,10 @@ ok("the favourite is kept", Object.keys(favs().items || {}).includes(favId),
 
 window.location.hash = `#/item/${encodeURIComponent(favId)}`;
 await sleep(250);
-ok("the item page shows it as favourited", !!$("article .actions button.heart.on"));
+ok("the item page shows it as favourited", !!$(".item .actions button.heart.on"));
 ok("...with the word beside the heart",
-   /Favourited/.test($("article .actions button.heart")?.textContent || ""),
-   $("article .actions button.heart")?.textContent);
+   /Favourited/.test($(".item .actions button.heart")?.textContent || ""),
+   $(".item .actions button.heart")?.textContent);
 
 window.location.hash = "#/authors";
 await sleep(250);
@@ -631,7 +662,7 @@ const imp = async text => {
 {
   window.location.hash = `#/item/${encodeURIComponent(favId)}`;
   await sleep(250);
-  const heart = $("article .actions button.heart");
+  const heart = $(".item .actions button.heart");
   ok("the recording is still favourited", !!heart && heart.classList.contains("on"));
   click(heart);
   await sleep(100);
@@ -717,9 +748,12 @@ console.log("\n== what an export carries ==");
   await sleep(220);
   click($("#noteExport"));
   await sleep(120);
+  // Named rather than counted, so adding a record to the file has to be a
+  // deliberate change here too.
   ok("the export dialog offers one tick per record",
-     $$("#ioBody input[data-sec]").length === 4,
-     `${$$("#ioBody input[data-sec]").length}`);
+     $$("#ioBody input[data-sec]").map(b => b.dataset.sec).join(",")
+       === "favourites,playlists,notes,history,searches",
+     $$("#ioBody input[data-sec]").map(b => b.dataset.sec).join(","));
   ok("...with notes asked for, since that is where we pressed it",
      $('#ioBody input[data-sec="notes"]')?.checked === true);
   ok("...and history left out unless it is asked for",
@@ -797,6 +831,43 @@ console.log("\n== the corner ==");
   await sleep(150);
   ok("...and it clears when the network comes back",
      !$("#meMenu")?.classList.contains("off") && !$("#meBody .nonet"));
+}
+
+/* Room for what the system draws over the top of an installed app: a clock, a
+   notch, a home indicator. Asserted against what the build ships, because this
+   is the kind of thing that is deleted by accident and only noticed on somebody
+   else's phone. */
+/* Safari offers Reader on anything that looks like an article, throws away the
+   player and the panels, and leaves something unusable. There is no supported
+   way to decline, so the page stops claiming to be one. */
+console.log("\n== reading it here rather than in Reader ==");
+{
+  window.location.hash = `#/item/${encodeURIComponent(target.id)}`;
+  await sleep(300);
+  ok("an item page does not present itself as an article",
+     !doc.querySelector("main article") && !!$("section.item"),
+     doc.querySelector("main article") ? "still an <article>" : "section.item");
+  ok("...and is still named for a screen reader",
+     $("section.item")?.getAttribute("aria-labelledby") === "itemTitle" &&
+     $("#itemTitle")?.textContent === target.title,
+     $("section.item")?.getAttribute("aria-labelledby"));
+}
+
+console.log("\n== room for the system's own furniture ==");
+{
+  const css = fs.readFileSync(path.join(ROOT, "style.css"), "utf8");
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  ok("the page asks for the whole screen", /viewport-fit=cover/.test(html));
+  ok("...and lets iOS keep its status bar rather than running underneath it",
+     /status-bar-style" content="default"/.test(html),
+     (html.match(/status-bar-style[^>]*/) || ["missing"])[0]);
+  ok("the header leaves room for anything drawn above it",
+     /header\.top\{[^}]*safe-area-inset-top/.test(css));
+  ok("...and the side gutters give way to a notch in landscape",
+     /\.wrap\{[^}]*safe-area-inset-left/.test(css) &&
+     /\.topbar\{[^}]*safe-area-inset-left/.test(css));
+  ok("...and the player still clears the home indicator",
+     /\.player\{[^}]*safe-area-inset-bottom/.test(css));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

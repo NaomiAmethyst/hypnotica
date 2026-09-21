@@ -28,14 +28,23 @@ body.has-player{padding-bottom:calc(150px + env(safe-area-inset-bottom))}
 a{color:var(--accent)}
 button{font:inherit;cursor:pointer}
 img{max-width:100%}
-.wrap{max-width:var(--maxw);margin:0 auto;padding:0 16px 40px}
+/* The gutters give way to the notch in landscape, where the safe area is wider
+   than the padding. Every inset is zero on a desktop, so none of this costs
+   anything there. */
+.wrap{max-width:var(--maxw);margin:0 auto;
+  padding:0 max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
 .hidden{display:none !important}
 
 /* ---------- header ---------- */
+/* An installed app asks for the whole screen with viewport-fit=cover, so the
+   header has to leave room for whatever the system draws over the top of it --
+   a clock, a notch, a camera. Belt and braces: iOS with a "default" status bar
+   reports no top inset because it keeps the strip itself, but an installed app
+   elsewhere does go edge to edge and does report one. */
 header.top{position:sticky;top:0;z-index:30;background:var(--bg);
-  border-bottom:1px solid var(--line)}
-.topbar{max-width:var(--maxw);margin:0 auto;padding:10px 16px;
-  display:flex;align-items:center;gap:12px}
+  border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top,0px)}
+.topbar{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;gap:12px;
+  padding:10px max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px))}
 .brand{font-weight:700;font-size:1.15rem;text-decoration:none;color:var(--fg);
   display:flex;align-items:center;gap:8px;white-space:nowrap}
 .brand .dot{width:12px;height:12px;border-radius:50%;
@@ -194,7 +203,7 @@ b.f-not{color:var(--mut);text-decoration:line-through}
 /* ---------- item page ---------- */
 article{max-width:820px;margin:0 auto}
 .back{display:inline-block;margin:14px 0;text-decoration:none;color:var(--mut)}
-article h1{font-size:1.7rem;margin:.1em 0 .3em;line-height:1.25}
+.item h1{font-size:1.7rem;margin:.1em 0 .3em;line-height:1.25}
 .hero{width:100%;border-radius:var(--radius);margin:14px 0}
 /* A recording that happens to have pictures. Sized to the page, capped so a
    portrait clip does not push the write-up off the bottom of the screen. */
@@ -305,6 +314,11 @@ ol.list li .g{display:flex;gap:4px;flex:none}
 ol.list li .g button{border:1px solid var(--line);background:var(--bg);color:var(--mut);
   border-radius:7px;width:28px;height:28px;display:grid;place-items:center;font-size:12px}
 ol.list li .g button:hover{border-color:var(--accent);color:var(--accent)}
+/* A link that sits in a row of buttons wants to look like one. */
+ol.list li .g a.open{border:1px solid var(--line);background:var(--bg);color:var(--mut);
+  border-radius:7px;width:28px;height:28px;display:grid;place-items:center;
+  text-decoration:none;font-size:15px;line-height:1}
+ol.list li .g a.open:hover{border-color:var(--accent);color:var(--accent)}
 .empty{color:var(--mut);text-align:center;padding:48px 20px;border:1px dashed var(--line);
   border-radius:var(--radius);margin-top:18px}
 .progress{height:4px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:5px}
@@ -590,3 +604,40 @@ details.astext textarea{width:100%;margin-top:7px;font-size:.76rem;
   background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.86rem}
 .theirbar b{font-weight:600}
 .card .theirs{margin:6px 0 0;font-size:.74rem;color:var(--accent);font-weight:600}
+
+/* ---- saved searches and the standing filter ---------------------------- */
+.saved{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:12px 0 0}
+.tag.saved1{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;font-size:.78rem}
+.tag.saved1 i{font-style:normal;opacity:.55;cursor:pointer;padding:0 2px}
+.tag.saved1 i:hover{opacity:1}
+
+/* A chosen chip, with the pin that decides whether it belongs to this search or
+   to every one. Selection is off: a long press is the pin on a phone, and iOS
+   answers a long press on text by offering to select it. */
+.fsel .chip{display:inline-flex;align-items:center;padding:0;overflow:hidden;
+  cursor:default;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.fsel .chip .lab{padding:1px 3px}
+.fsel .chip .pin,.fsel .chip .off{border:0;background:none;color:inherit;
+  padding:2px 6px;line-height:1;cursor:pointer;opacity:.4}
+.fsel .chip .pin svg{width:9px;height:9px;fill:currentColor;display:block}
+.fsel .chip .pin:hover,.fsel .chip .off:hover{opacity:1}
+.fsel .chip.pinned .pin{opacity:1}
+.fsel .chip.pinned{box-shadow:inset 0 0 0 1px currentColor}
+
+/* Said once, above the chips, and small: the pins are already saying which. */
+.pinline{display:flex;align-items:center;gap:8px;margin:0 0 9px;
+  font-size:.78rem;color:var(--mut)}
+.pinline svg{width:10px;height:10px;fill:currentColor;flex:none}
+.pinline.asleep{opacity:.75;font-style:italic}
+
+/* ---- what the people you keep have to say ------------------------------ */
+.among{margin:14px 0 0;padding:10px 14px;border-radius:var(--radius);font-size:.88rem;
+  border:1px solid color-mix(in srgb,var(--k-meta) 40%,var(--line));
+  background:color-mix(in srgb,var(--k-meta) 7%,transparent)}
+.among p{margin:0 0 4px}
+.among p:last-child{margin:6px 0 0}
+.among b{font-weight:600;color:var(--k-meta)}
+.card .among1{margin:6px 0 0;font-size:.74rem;color:var(--k-meta);font-weight:600;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ol.list li .t span .warn{color:var(--accent)}
+

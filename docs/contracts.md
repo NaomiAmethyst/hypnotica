@@ -216,9 +216,13 @@ anything but localhost; everything else works unchanged.
 | `hyp.history` | `recent` sittings, `plays` counts held per device, `forget` and `before` watermarks, `epoch`, `paused` |
 | `hyp.queue`, `hyp.positions`, `hyp.rate` | Play queue, resume positions, speed |
 | `hyp.sync`, `hyp.sync.counters`, `hyp.sync.seen` | The endpoint, this device's write counters, and the highest counter seen per slot |
-| `hyp.shares`, `hyp.me`, `hyp.devices` | Published shares with their keys, the profile name, and the devices last seen |
+| `hyp.shares`, `hyp.shares.gone` | Published shares with their keys, and the ids of ones revoked. A share belongs to the library rather than the device that published it: any device in the group can rotate or revoke one, and a revocation is recorded so a device that has not heard of it yet cannot put the slot back |
+| `hyp.me`, `hyp.devices` | The profile name and when it was set, and the devices last seen |
+| `hyp.follows` | Shares given to this person and kept: the link, and the ids, playlist names and play counts the annotations need. Never the timeline, the notes or the titles |
 | `hyp.device` | A random id for this browser, so a play count can be held per device and summed for display |
 | `hypnotica-keys` | IndexedDB: the group key, and the device signing key |
+| `hyp.always` | Pinned filters: `tags`, `cats` and `meta` in the same `{any, all, not}` shape, plus `off` while they are suspended. A value lives here or in `hyp.filters`, never both; pinning moves it across with its mode. Applied on top of every search and every creator's page, and Clear does not reach it |
+| `hyp.searches`, `hyp.searches.gone` | Saved searches, each a name over a whole filter state, and the ids of ones forgotten |
 | `hyp.filters`, `hyp.dlqueue` | Library filters and the download queue. `tags`, `cats` and `meta` each hold `{any, all, not}`; `meta` takes `played`, `note`, `favourite` and `playlist`, matched against what this browser remembers rather than anything in the build |
 | `hypnotica-audio-v1` | Cache Storage for saved audio; unversioned |
 | `hypnotica` | IndexedDB catalogue pages, versioned by CATALOG_SCHEMA |
@@ -229,11 +233,29 @@ the item changes or after half an hour of quiet, so one sitting is one entry
 however often it was paused. The controls are a pause and a clear; nothing is
 sent anywhere, and an export carries it only when it is ticked.
 
-Playlists, favourites, notes and history export to a JSON file and import back
-on the same device or another one. The export dialog ticks favourites and
-playlists; notes and history are left for the person to add, because they are
-written for oneself and a file is the thing that gets sent to somebody else. A
-note marked private is left out whatever is ticked. Times are ISO 8601; a number
+Playlists, favourites, notes, saved searches and history export to a JSON file
+and import back on the same device or another one. The export dialog ticks
+favourites and playlists; notes, history and searches are left for the person to
+add, because they are written for oneself and a file is the thing that gets sent
+to somebody else. A note marked private is left out whatever is ticked.
+
+A share is republished only when what it says has changed, so a sync that alters
+nothing writes nothing; its counter is a millisecond clock rather than a tally,
+because any device in the group may be the next to publish it and two tallies
+kept separately would both start at one.
+
+The profile name, published shares and the links of kept shares travel with the
+pinned filters,
+between a person's own devices and nowhere else; what was fetched with a link is
+not carried, because each device asks for itself and a cached profile is somebody
+else's data to be holding twice.
+
+Pinned filters are in none of it. They are a list of what somebody would rather
+not be shown, which is a fact about them rather than about the library, so it
+travels only in the encrypted blob between their own devices; an import never
+sets it, and no share carries it. Two devices that disagree resolve to whichever
+wrote last, taken whole: the union of what either would rather avoid is not what
+either of them asked for. Times are ISO 8601; a number
 of milliseconds is also accepted when reading.
 
 ```json
@@ -292,6 +314,8 @@ record of a removal that is newer than what is held here:
 - Listening events union and are deduplicated on the device and time that wrote
   them. Play counts are held per device: a merge takes the higher count for each
   device, or the newer epoch outright, and totals are summed only for display.
+- Saved searches join by id, and one the file records as forgotten goes unless
+  it was saved again here since.
 - Item and author ids the build does not know are kept, not dropped, and the
   import reports how many there were. A library that later gains them shows
   them without another import. `names` says what they were called, so a record

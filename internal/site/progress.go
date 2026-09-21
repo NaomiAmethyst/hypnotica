@@ -136,6 +136,11 @@ func (p *phase) count() int { return int(p.done.Load()) }
 
 // finish closes the phase and leaves one line behind saying what it did. The
 // summary is printed whether or not there was a terminal to animate.
+//
+// A phase that was given a total and did not reach it, or ran past it, says so.
+// It means the count and the thing being counted have come apart -- stepping
+// once per asset against a total of items, say -- which on a terminal shows up
+// as a figure sailing past its own total and in a log does not show up at all.
 func (p *phase) finish(format string, a ...any) {
 	if p.r != nil && p.r.tty {
 		close(p.stop)
@@ -144,7 +149,11 @@ func (p *phase) finish(format string, a ...any) {
 		p.r.clear()
 		p.r.mu.Unlock()
 	}
-	p.r.say("→ %s (%s)", fmt.Sprintf(format, a...), short(time.Since(p.started)))
+	msg := fmt.Sprintf(format, a...)
+	if done := p.done.Load(); p.total > 0 && done != p.total {
+		msg += fmt.Sprintf(" [counted %d of %d]", done, p.total)
+	}
+	p.r.say("→ %s (%s)", msg, short(time.Since(p.started)))
 }
 
 func short(d time.Duration) string {

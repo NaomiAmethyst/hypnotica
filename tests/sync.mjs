@@ -25,6 +25,21 @@ const waitFor = async (fn, ms = 8000) => {
   return false;
 };
 
+/* Waiting on a device to notice something the other one did.
+
+   A change is pushed on a debounce, so telling the far device to sync the
+   instant after is telling it to fetch a blob written before the thing it is
+   waiting for. Rather than sleeping for longer than the debounce and hoping,
+   this keeps asking: press sync, look, press sync again. */
+const syncUntil = async (who, cond, ms = 25000) => {
+  for (let t = 0; t < ms; t += 1000) {
+    if (await cond()) return true;
+    who.click(who.$('[data-act="syncNow"]'));
+    await sleep(1000);
+  }
+  return cond();
+};
+
 /* ---- endpoints, served by the binary under test --------------------------- */
 /* Three of them, because how a library gets on to one is a choice the person
    running it makes: open to anybody, gated behind an invite, or shut. */
@@ -267,8 +282,7 @@ console.log("\n== a name is a setting, not a search ==");
 {
   A.click(A.$('[data-act="syncNow"]'));
   await sleep(1200);
-  B.click(B.$('[data-act="syncNow"]'));
-  const named = await waitFor(() => B.store("hyp.me")?.name === "Naomi", 15000);
+  const named = await syncUntil(B, () => B.store("hyp.me")?.name === "Naomi");
   ok("a name set on one device reaches the other", named, JSON.stringify(B.store("hyp.me")));
 
   /* The one that actually bit: a name from before names carried a time. Two of
@@ -278,9 +292,8 @@ console.log("\n== a name is a setting, not a search ==");
   A.put("hyp.me", { name: "Naomi" });
   A.click(A.$('[data-act="syncNow"]'));
   await sleep(1500);
-  B.click(B.$('[data-act="syncNow"]'));
-  const settled = await waitFor(() =>
-    B.store("hyp.me")?.name === A.store("hyp.me")?.name, 15000);
+  const settled = await syncUntil(B, () =>
+    B.store("hyp.me")?.name === A.store("hyp.me")?.name);
   ok("two names with no times settle on one rather than refusing each other",
      settled, `${JSON.stringify(A.store("hyp.me"))} vs ${JSON.stringify(B.store("hyp.me"))}`);
 
@@ -570,8 +583,7 @@ console.log("\n== a link carried in by hand ==");
    takes the share down and everything above reads it. */
 console.log("\n== a share reaches the other device ==");
 {
-  B.click(B.$('[data-act="syncNow"]'));
-  const arrived = await waitFor(() => (B.store("hyp.shares") || []).length === 1, 15000);
+  const arrived = await syncUntil(B, () => (B.store("hyp.shares") || []).length === 1);
   ok("the other device knows about the share", arrived,
      JSON.stringify((B.store("hyp.shares") || []).map(r => r.label)));
   await B.go("#/profile");
@@ -591,8 +603,11 @@ console.log("\n== a share reaches the other device ==");
   ok("...and is remembered as revoked",
      Object.keys(B.store("hyp.shares.gone") || {}).length === 1,
      JSON.stringify(B.store("hyp.shares.gone")));
-  A.click(A.$('[data-act="syncNow"]'));
-  const dropped = await waitFor(() => (A.store("hyp.shares") || []).length === 0, 15000);
+  // Published before the other device is asked to look, so what it fetches is
+  // the revocation rather than the blob written just before it.
+  B.click(B.$('[data-act="syncNow"]'));
+  await sleep(1200);
+  const dropped = await syncUntil(A, () => (A.store("hyp.shares") || []).length === 0);
   ok("...so the device that made it lets it go too", dropped,
      JSON.stringify(A.store("hyp.shares")));
   // One slot fewer, and nobody has put it back: other shares on this endpoint

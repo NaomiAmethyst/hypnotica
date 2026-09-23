@@ -120,7 +120,8 @@ async function browser(name, opts = {}) {
   window.Blob = globalThis.Blob;
   window.CompressionStream = globalThis.CompressionStream;
   window.DecompressionStream = globalThis.DecompressionStream;
-  window.indexedDB = keyedIDB();
+  const idb = keyedIDB();
+  window.indexedDB = idb;
   window.btoa = globalThis.btoa; window.atob = globalThis.atob;
 
   const realFetch = globalThis.fetch;
@@ -163,7 +164,7 @@ async function browser(name, opts = {}) {
   await sleep(500);
   const $ = s => doc.querySelector(s), $$ = s => [...doc.querySelectorAll(s)];
   return {
-    name, window, doc, $, $$, seen,
+    name, window, doc, $, $$, seen, keys: idb.store,
     click: el => el && el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })),
     setVal: (el, v) => { el.value = v; el.dispatchEvent(new window.Event("input", { bubbles: true })); },
     go: async (hash) => { window.location.hash = hash; await sleep(250); },
@@ -227,6 +228,12 @@ ok("...and they are the same six",
    `${A.$(".sas")?.textContent} vs ${B.$(".sas")?.textContent}`);
 
 A.click(A.$('[data-act="linkConfirm"]'));
+await sleep(300);
+ok("confirming on one side is not enough", !B.store("hyp.sync"),
+   JSON.stringify(B.store("hyp.sync")));
+ok("...the other is asked to confirm too", !!B.$('[data-act="linkAccept"]'),
+   B.text().slice(0, 160));
+B.click(B.$('[data-act="linkAccept"]'));
 const joined = await waitFor(() => !!B.store("hyp.sync") && /Linked/.test(B.text()), 15000);
 ok("B joins the group", joined, B.text().slice(0, 140));
 const arrived = await waitFor(() => !!B.store("hyp.favourites")?.items?.[liked], 15000);
@@ -621,6 +628,155 @@ console.log("\n== a share reaches the other device ==");
      slots().length === before.length - 1 &&
      slots().every(f => before.includes(f)),
      `${before.join(",")} -> ${slots().join(",")}`);
+}
+
+console.log("\n== two groups that are linked become one ==");
+{
+  /* Two libraries of two devices each, on two different endpoints, each with a
+     share out. One device of each is linked to the other, and the two siblings
+     that took no part find their way to the same group on their own. */
+  const far = await endpoint("--sync-open");
+  const gkOf = who => {
+    const r = who.keys.get("group");
+    return r ? Buffer.from(r.gk).toString("hex") : "";
+  };
+  const groupsIn = dir => fs.existsSync(path.join(dir, "g")) ? fs.readdirSync(path.join(dir, "g")) : [];
+  const slotsIn = (dir, g) => fs.existsSync(path.join(dir, "g", g, "s"))
+    ? fs.readdirSync(path.join(dir, "g", g, "s")) : [];
+  const like = async (who, id) => {
+    await who.go("#/item/" + encodeURIComponent(id));
+    who.click(who.$(".item .actions button.heart"));
+    await sleep(100);
+  };
+  const setUp = async (who, where, dir) => {
+    const before = groupsIn(dir);
+    who.click(who.$('[data-act="linkStart"]'));
+    await sleep(120);
+    who.setVal(who.$("#lnkWhere"), where);
+    who.click(who.$('[data-act="linkGo"]'));
+    await waitFor(() => !!who.$("#lnkText"), 10000);
+    who.click(who.$('[data-act="linkCancel"]'));
+    return groupsIn(dir).find(g => !before.includes(g));
+  };
+  const share = async who => {
+    await who.go("#/profile");
+    who.click(who.$('[data-act="shareNew"][data-preset="choosing"]'));
+    await waitFor(() => (who.store("hyp.shares") || []).length === 1, 15000);
+    await sleep(300);
+    return who.store("hyp.shares")[0];
+  };
+  // Up to the six digits on both screens.
+  const offer = async (offerer, joiner) => {
+    offerer.click(offerer.$('[data-act="linkStart"]'));
+    await waitFor(() => !!offerer.$("#lnkText"), 10000);
+    const link = offerer.$("#lnkText").value;
+    await joiner.go(link.slice(link.indexOf("#")));
+    joiner.click(joiner.$('[data-act="linkJoin"]'));
+    await waitFor(() => /\d{6}/.test(joiner.$("main .sas")?.textContent || "")
+                     && /\d{6}/.test(offerer.$("#ioBody .sas")?.textContent || ""), 12000);
+    return link;
+  };
+  const confirm = async (offerer, joiner, first = "offerer") => {
+    const a = () => offerer.click(offerer.$('[data-act="linkConfirm"]'));
+    const b = () => joiner.click(joiner.$('[data-act="linkAccept"]'));
+    if (first === "offerer") { a(); await sleep(400); b(); } else { b(); await sleep(400); a(); }
+    return waitFor(() => /Linked/.test(joiner.text())
+                      && /Linked|already/.test(offerer.$("#ioBody")?.textContent || ""), 25000);
+  };
+  const link2 = async (offerer, joiner) => { await offer(offerer, joiner); return confirm(offerer, joiner); };
+
+  const P1 = await browser("P1"), P2 = await browser("P2");
+  const Q1 = await browser("Q1"), Q2 = await browser("Q2");
+  const i1 = firstPage[1].id, i2 = firstPage[2].id;
+  await like(P1, i1);
+  await like(Q1, i2);
+  const gP = await setUp(P1, base, syncDir);
+  const gQ = await setUp(Q1, far.url, far.dir);
+  ok("two libraries, each in a group of its own", !!gP && !!gQ && gP !== gQ, `${gP} ${gQ}`);
+  ok("...each with a second device", await link2(P1, P2) && await link2(Q1, Q2)
+     && gkOf(P1) === gkOf(P2) && gkOf(Q1) === gkOf(Q2) && gkOf(P1) !== gkOf(Q1));
+  const sP = await share(P1), sQ = await share(Q1);
+  ok("...and each with a share out", !!sP && !!sQ && sP.group === gP && sQ.group === gQ,
+     JSON.stringify([sP?.group, sQ?.group]));
+
+  /* The device whose group sorts later offers, so the offering side is the one
+     that moves -- the case that used to leave the others behind. */
+  const [W1, W2, L1, L2] = gP < gQ ? [P1, P2, Q1, Q2] : [Q1, Q2, P1, P2];
+  const [gW, gL] = gP < gQ ? [gP, gQ] : [gQ, gP];
+  const [wBase, lBase] = gP < gQ ? [base, far.url] : [far.url, base];
+  const [wDir, lDir] = gP < gQ ? [syncDir, far.dir] : [far.dir, syncDir];
+  const [sW, sL] = gP < gQ ? [sP, sQ] : [sQ, sP];
+  const winnerKey = gkOf(W1);
+  const lProfile = () => JSON.parse(fs.readFileSync(path.join(lDir, "pf", sL.id + ".json"), "utf8"));
+  const lCounter = lProfile().env.counter;
+
+  await offer(L1, W1);
+  ok("the device already in a group is told what joining will do",
+     /already linked to 1 other/.test(W1.text()) && /groups together/.test(W1.text())
+     && /shared go on working/.test(W1.text()), W1.text().slice(0, 400));
+  ok("both ends confirm, in either order", await confirm(L1, W1, "joiner"),
+     `${W1.text().slice(0, 120)} | ${L1.$("#ioBody")?.textContent?.slice(0, 120)}`);
+  ok("both say the two groups are now one",
+     /now\s+one/.test(W1.text()) && /now\s+one/.test(L1.$("#ioBody")?.textContent || ""));
+  ok("...and it is the group that sorts first, whoever offered",
+     gkOf(L1) === winnerKey && gkOf(W1) === winnerKey);
+  ok("...at that group's own endpoint", L1.store("hyp.sync")?.endpoint === wBase,
+     JSON.stringify(L1.store("hyp.sync")));
+
+  const followed = await syncUntil(L2, () => gkOf(L2) === winnerKey, 30000);
+  ok("the device left behind follows on its own", followed);
+  ok("...to the same endpoint", L2.store("hyp.sync")?.endpoint === wBase);
+  const everyone = [W1, W2, L1, L2];
+  const all = async cond => {
+    for (const who of everyone) if (!await syncUntil(who, () => cond(who), 30000)) return who.name;
+    return "";
+  };
+  const missing = await all(who => !!who.store("hyp.favourites")?.items?.[i1]
+                              && !!who.store("hyp.favourites")?.items?.[i2]);
+  ok("all four hold what both libraries had liked", !missing, missing);
+  ok("...and all four are one group on the endpoint", await waitFor(() =>
+     slotsIn(wDir, gW).length === 4, 15000), slotsIn(wDir, gW).join(","));
+  ok("the group left behind keeps only its forwarding note", await waitFor(() =>
+     slotsIn(lDir, gL).length === 1, 15000), slotsIn(lDir, gL).join(","));
+
+  const bothShares = await all(who => (who.store("hyp.shares") || []).length === 2);
+  ok("both shares are the merged library's", !bothShares, bothShares);
+  const lRow = (W2.store("hyp.shares") || []).find(r => r.id === sL.id);
+  ok("...the old one still saying where it was published",
+     lRow?.group === gL && lRow?.endpoint === lBase, JSON.stringify(lRow));
+  await W2.go("#/profile");
+  const lLink = W2.$$(".sharelink").map(el => el.value).find(v => v.includes(sL.key)) || "";
+  ok("...so its link, copied from a device that was never in that group, still points there",
+     lLink.includes(encodeURIComponent(lBase)), lLink.slice(0, 120));
+
+  // Republished with the merged library, under the key the ring kept for it.
+  const republished = await syncUntil(L2, () => lProfile().env.counter > lCounter, 30000);
+  ok("a share made before the merge is republished after it", republished);
+  const V = await browser("V");
+  await V.go(lLink.slice(lLink.indexOf("#")));
+  const t1 = firstPage[1].title, t2 = firstPage[2].title;
+  ok("...and whoever holds its link sees both sides of the library",
+     await waitFor(() => V.text().includes(t1) && V.text().includes(t2), 10000),
+     V.text().slice(0, 300));
+
+  const revokeBtn = W2.$$('[data-act="shareRevoke"]').find(b => b.dataset.id === sL.id);
+  W2.click(revokeBtn);
+  const gone = await waitFor(() => !fs.existsSync(path.join(lDir, "pf", sL.id + ".json")), 10000);
+  ok("...and it can be revoked from a device that was never in the group that made it", gone,
+     W2.doc.querySelector(".toast")?.textContent || "");
+  ok("...while the other share is untouched",
+     fs.existsSync(path.join(wDir, "pf", sW.id + ".json")));
+
+  /* The other way round, on one endpoint: the device that offers is in the
+     group that sorts first, so this time it is the joining side that moves. */
+  const R = await browser("R"), S = await browser("S");
+  const gR = await setUp(R, base, syncDir), gS = await setUp(S, base, syncDir);
+  const [lo, hi] = gR < gS ? [R, S] : [S, R];
+  const loKey = gkOf(lo);
+  await offer(lo, hi);
+  ok("linked the other way, the joining side moves instead",
+     await confirm(lo, hi) && gkOf(hi) === loKey && gkOf(lo) === loKey);
+  ok("...and says so", /now\s+one/.test(hi.text()), hi.text().slice(0, 200));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

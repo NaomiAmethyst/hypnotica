@@ -340,13 +340,61 @@ server does, so it can use one.
    under the pairing key.
 3. Both screens show the same six digits, derived from SHA-256 over both public
    keys and the pairing id.
-4. The person confirms on A. A performs ECDH to B's public key and PUTs `gk`
-   encrypted under the result.
-5. B fetches it, derives the schedule, writes its slot, and the pairing slot is
-   deleted.
+4. The person confirms on each device, in either order. Each side then seals
+   what it holds -- its group key and its endpoint, or nothing from a device in
+   no group -- to the other's public key by ECDH and posts it: B as `b.ok`,
+   A as `a.ct`.
+5. A reads B's half and marks its own `got`. B takes A's half only once `got`
+   is there, so neither is left without what the other handed over, and then
+   deletes the record.
+6. Each side now holds both groups, if there were two, and applies the same
+   rule to them (below).
 
-One tap each. An old screenshot is inert, and the six digits are what makes
-"another device clicking joins the group" safe rather than merely convenient.
+A confirmation on each side, because each side may be handing over a key: a
+device that took the other's key on the strength of the other screen alone
+would join whatever group a party in the middle sealed to it, and one that
+handed over its own would give that party the whole library. An old
+screenshot is inert, and the six digits are what makes "another device clicking
+joins the group" safe rather than merely convenient.
+
+## Two groups become one
+
+Linking a device that is already linked elsewhere does not strand the devices it
+was linked to. Both groups become one: the group whose id sorts first. Both ends
+of the pairing work that out alike without a further message, it does not
+depend on who offered, and since every move is to a lower id, no sequence of
+merges can form a loop -- two pairings made at once in opposite directions end
+in the same place.
+
+- **The device that moves** retires its old group key to a *ring*, switches its
+  endpoint and group key, and on its next pass writes a forwarding note into its
+  own slot in the old group: the new group key and endpoint, sealed under the
+  old group's content key like any other blob, and nothing else. Its state goes
+  to the new group and is merged there like any device's.
+- **Devices still in the old group** find the note on their next pull, merge
+  what they have already taken, and follow it (only ever to a lower id). Having
+  followed, each deletes its own old slot, since the note already says where to
+  go; the note stays, so a device that was switched off for months still finds
+  its way. A device that moves again rewrites the notes it left, so a straggler
+  two merges back goes straight to the end.
+- **The ring** travels in the sync blob to every device in the merged group.
+  The endpoint records which group published each share and takes changes to it
+  from no other, so a share made before a merge is republished, rotated and
+  revoked with the key the ring kept, at the endpoint it was published to. Each
+  share records both, and its link is built from its own endpoint rather than
+  the one the library now syncs through.
+
+What merging means for people holding share links: the links go on working,
+unchanged, because a share's key is its own and not derived from the group's.
+What they show becomes the merged library from the next publish. The joining
+screen says so before anything is pressed, when there are shares. Two links to
+one person from what were two groups are now two links to the same library; the
+reader's side cannot tell and shows the name twice, and revoking one is the
+remedy. The profile name is one setting and the newer one wins, so one side's
+links change name.
+
+Nothing about this needs the endpoint's help: a note is an ordinary blob in an
+ordinary slot, and the endpoint already lets a member delete a slot.
 
 ## Profiles
 

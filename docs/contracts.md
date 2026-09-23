@@ -215,12 +215,12 @@ anything but localhost; everything else works unchanged.
 | `hyp.notes` | Notes against items: `{text, updated}`, optionally `private`, and `was` where a merge displaced text |
 | `hyp.history` | `recent` sittings, `plays` counts held per device, `forget` and `before` watermarks, `epoch`, `paused` |
 | `hyp.queue`, `hyp.positions`, `hyp.rate` | Play queue, resume positions, speed |
-| `hyp.sync`, `hyp.sync.counters`, `hyp.sync.seen` | The endpoint, this device's write counters, and the highest counter seen per slot |
-| `hyp.shares`, `hyp.shares.gone` | Published shares with their keys, and the ids of ones revoked. A share belongs to the library rather than the device that published it: any device in the group can rotate or revoke one, and a revocation is recorded so a device that has not heard of it yet cannot put the slot back |
+| `hyp.sync`, `hyp.sync.counters`, `hyp.sync.seen` | The endpoint, this device's write counters, and the highest counter seen per group and slot |
+| `hyp.shares`, `hyp.shares.gone` | Published shares with their keys, the `group` and `endpoint` that published each, and the ids of ones revoked. A share belongs to the library rather than the device that published it: any device in the group can rotate or revoke one, and a revocation is recorded so a device that has not heard of it yet cannot put the slot back |
 | `hyp.me`, `hyp.devices` | The profile name and when it was set, and the devices last seen |
 | `hyp.follows` | Shares given to this person and kept: the link, and the ids, playlist names and play counts the annotations need. Never the timeline, the notes or the titles |
 | `hyp.device` | A random id for this browser, so a play count can be held per device and summed for display |
-| `hypnotica-keys` | IndexedDB: the group key, and the device signing key |
+| `hypnotica-keys` | IndexedDB: the group key, the device signing key, and the ring of group keys this library held before a merge, each with its endpoint |
 | `hyp.always` | Pinned filters: `tags`, `cats` and `meta` in the same `{any, all, not}` shape, plus `off` while they are suspended. A value lives here or in `hyp.filters`, never both; pinning moves it across with its mode. Applied on top of every search and every creator's page, and Clear does not reach it |
 | `hyp.searches`, `hyp.searches.gone` | Saved searches, each a name over a whole filter state, and the ids of ones forgotten |
 | `hyp.filters`, `hyp.dlqueue` | Library filters and the download queue. `tags`, `cats` and `meta` each hold `{any, all, not}`; `meta` takes `played`, `note`, `favourite` and `playlist`, matched against what this browser remembers rather than anything in the build |
@@ -404,8 +404,13 @@ is never shared with anybody.
 Each device also holds a P-256 signing key, generated non-extractable, whose
 fingerprint is the first 128 bits of the SHA-256 of its SPKI encoding. Pairing
 uses ephemeral P-256 ECDH keys and shows six digits derived from both public
-keys on both screens; the group key travels sealed to the joining device's key
-and never appears in a link or a code.
+keys on both screens, and both screens are confirmed. Each side's group key, if
+it has one, travels sealed to the other's key and never appears in a link or a
+code. Where both had a group, both become the one whose id sorts first; the
+devices left in the other follow a forwarding note written into the old group,
+a blob with `moved: {gk, e}` in place of state. A sync blob may also carry
+`ring`, the retired group keys and their endpoints, which a share published
+before a merge needs to be changed.
 
 ## Migration from Python
 

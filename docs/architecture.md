@@ -64,6 +64,12 @@ location is chosen. To change it, update go.mod and the entry point's import.
     given a share link, which is read-only by construction: it carries a key that
     derives a read MAC and a content key for one published document, and no
     capability that could write anything.
+19. Linking a device that is already in a group merges the two groups into the
+    one whose id sorts first, whichever device offered. The devices left behind
+    follow a forwarding note, the retired key is kept on a ring that syncs so
+    the shares it published can still be changed, and a share records the group
+    and endpoint that published it. Pairing is confirmed on both screens,
+    because both may be handing over a key.
 
 ## Dependencies
 

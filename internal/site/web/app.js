@@ -959,6 +959,10 @@ const Share = {
       follows: Array.isArray(raw.follows) ? raw.follows : [],
       shares: Array.isArray(raw.shares) ? raw.shares : [],
       sharesRemoved: obj(raw.sharesRemoved),
+      // Only ever in a sync blob: the keys of groups this one used to be, and a
+      // note that this device's group has become part of another.
+      ring: Array.isArray(raw.ring) ? raw.ring : [],
+      moved: raw.moved && typeof raw.moved === "object" ? raw.moved : null,
       history: {
         recent: Array.isArray(hist.recent) ? hist.recent : [],
         plays: obj(hist.plays),
@@ -971,7 +975,11 @@ const Share = {
     if (!out.playlists.length && !out.items.size && !out.authors.size
         && !out.itemsGone.size && !out.authorsGone.size
         && !Object.keys(out.playlistsRemoved).length && !out.searches.length
-        && !Object.keys(out.notes).length && !anyHistory) {
+        && !Object.keys(out.notes).length && !anyHistory
+        // A device's own blob can hold nothing but settings and still be worth
+        // opening; an import file never carries these.
+        && !out.moved && !out.ring.length && !out.shares.length && !out.follows.length
+        && !Object.keys(out.me).length && !Object.keys(out.always).length) {
       throw new Error("No playlists, favourites, notes, searches or history in that file.");
     }
     return out;
@@ -1167,18 +1175,23 @@ const Sync = {
 
   counter(scope) { return Number(load(K.counters, {})[scope]) || 0; },
   bump(scope, to) { const m = load(K.counters, {}); m[scope] = to; save(K.counters, m); },
-  seenAt(slot) { return Number(load(K.seen, {})[slot]) || 0; },
-  sawAt(slot, n) { const m = load(K.seen, {}); m[slot] = n; save(K.seen, m); },
+  // Per group: a device keeps its fingerprint when it moves, and its counter in
+  // the new group starts again from one.
+  seenAt(group, slot) { return Number(load(K.seen, {})[`${group}/${slot}`]) || 0; },
+  sawAt(group, slot, n) { const m = load(K.seen, {}); m[`${group}/${slot}`] = n; save(K.seen, m); },
 
   /* The membership MAC covers method, path and body, so it cannot be lifted from
-     one request and used on another. */
-  async ask(method, path, payload, extra = {}) {
-    const k = await Keys.ready();
+     one request and used on another.
+
+     `at` speaks as some other group -- one this library used to be -- with its
+     keys and at its address; left out, it is the group this device is in. */
+  async ask(method, path, payload, extra = {}, at = null) {
+    const k = at ? at.k : await Keys.ready();
     const raw = payload === undefined ? new Uint8Array(0) : TE.encode(JSON.stringify(payload));
     const headers = { ...extra };
     if (k) headers["X-Hypnotica-Auth"] = await macOver(k.enrol, method, path, raw);
     if (payload !== undefined) headers["Content-Type"] = "application/json";
-    const r = await fetch(this.base() + path, {
+    const r = await fetch((at ? at.base : this.base()) + path, {
       method, headers, cache: "no-store",
       body: payload === undefined ? undefined : raw,
     });
@@ -1205,9 +1218,9 @@ const Sync = {
     return String(body.create || "invite");
   },
 
-  async list() {
-    const k = await Keys.ready();
-    const r = await this.ask("GET", `/sync/${k.group}/`);
+  async list(at = null) {
+    const k = at ? at.k : await Keys.ready();
+    const r = await this.ask("GET", `/sync/${k.group}/`, undefined, {}, at);
     const body = await r.json();
     return Array.isArray(body.slots) ? body.slots : [];
   },
@@ -1221,25 +1234,29 @@ const Sync = {
   /* This device's whole current view. Full state every time: at these sizes a
      delta would be complexity with nobody to pay for it, and a device returning
      from a week offline has nothing to replay. */
-  async push(rows) {
-    const k = await Keys.ready();
+  async push(rows, at = null, moved = null) {
+    const k = at ? at.k : await Keys.ready();
     const mine = (rows || []).find(r => r.slot === k.device.fp);
     const counter = Math.max(this.counter(k.group), mine ? mine.counter : 0) + 1;
-    const text = JSON.stringify(Share.bundle({
-      playlists: Playlists.all(), favourites: true, notes: true, history: true,
-      searches: true, secret: true, own: true,
-    }));
-    const env = await this.envelope(k, k.group, text, counter);
-    await this.ask("PUT", `/sync/${k.group}/${k.device.fp}`, env);
+    // A forwarding note is the address and nothing else: the state it would
+    // otherwise carry is waiting at the address.
+    const doc = moved
+      ? { hypnotica: TRANSFER, exported: nowISO(), moved }
+      : Share.bundle({ playlists: Playlists.all(), favourites: true, notes: true,
+                       history: true, searches: true, secret: true, own: true });
+    const ring = await Keys.ringOut(k.group);
+    if (ring.length) doc.ring = ring;
+    const env = await this.envelope(k, k.group, JSON.stringify(doc), counter);
+    await this.ask("PUT", `/sync/${k.group}/${k.device.fp}`, env, {}, at);
     this.bump(k.group, counter);
   },
 
   async pull(rows) {
     const k = await Keys.ready();
-    let took = 0;
+    let took = 0, moved = null;
     for (const row of rows) {
       if (row.slot === k.device.fp) continue;
-      if (row.counter <= this.seenAt(row.slot)) continue;   // never go backwards
+      if (row.counter <= this.seenAt(k.group, row.slot)) continue;   // never go backwards
       let env;
       try {
         env = await (await this.ask("GET", `/sync/${k.group}/${row.slot}`)).json();
@@ -1254,13 +1271,75 @@ const Sync = {
         if (Me.take(payload.me)) Shares.refresh().catch(() => {});
         this.adoptFollows(payload.follows);
         Shares.take(payload.shares, payload.sharesRemoved);
-        this.sawAt(row.slot, row.counter);
+        await Keys.takeRing(payload.ring);
+        const to = await this.forwarding(k, payload.moved);
+        if (to && (!moved || to.group < moved.group)) moved = to;
+        this.sawAt(k.group, row.slot, row.counter);
         took++;
       } catch (e) {
         this.state.error = `a blob from another device would not open: ${e.message}`;
       }
     }
-    return took;
+    return { took, moved };
+  },
+
+  /* A note left by a device that has gone to another group, which every device
+     still here follows. Only ever downhill: two groups become the one whose id
+     sorts first, so a note pointing anywhere else is either stale or a loop, and
+     neither is worth following. */
+  async forwarding(k, moved) {
+    if (!moved || typeof moved !== "object") return null;
+    let gk;
+    try { gk = fromB64(String(moved.gk || "")); } catch { return null; }
+    const e = String(moved.e || "").replace(/\/+$/, "");
+    if (gk.length !== 32 || !/^https?:\/\//.test(e)) return null;
+    const group = await groupOf(gk);
+    return group < k.group ? { gk, e, group } : null;
+  },
+
+  /* Leaving this group for another. What this device holds comes with it and is
+     merged there on the next pass; the group it leaves goes on the ring, so its
+     shares can still be spoken for, with what is owed to it -- a note for the
+     devices still there, if this is the device that decided, or else only its
+     own slot cleared, since somebody else's note already says where to go. */
+  async move(to, { note }) {
+    const was = await Keys.ready();
+    if (was) {
+      if (was.group === await groupOf(to.gk)) return;
+      Shares.stamp(was.group, this.base());
+      const ring = await Keys.ring();
+      // Notes already left elsewhere now point somewhere stale; rewritten on the
+      // next pass, so a device still in a group two moves back comes straight here.
+      for (const r of ring) if (r.state === "noted") r.state = "note";
+      await Keys.keepRing(ring);
+      await Keys.retire(was.gk, this.base(), note ? "note" : "leave");
+    }
+    save(K.sync, { endpoint: String(to.e).replace(/\/+$/, "") });
+    save(K.devices, {});
+    await Keys.create(to.gk);
+  },
+
+  /* What this device owes the groups it has left. Tried on every pass until it
+     has gone through; nothing here is urgent and none of it can be lost. */
+  async tidy() {
+    const k = await Keys.ready();
+    const ring = await Keys.ring();
+    let changed = false;
+    for (const r of ring) {
+      if (r.state !== "note" && r.state !== "leave") continue;
+      try {
+        const at = { k: await Keys.derive(r.gk), base: r.e };
+        if (r.state === "note") {
+          await this.push(await this.list(at), at, { gk: toB64(k.gk), e: this.base() });
+          r.state = "noted";
+        } else {
+          await this.ask("DELETE", `/sync/${r.group}/${at.k.device.fp}`, undefined, {}, at);
+          r.state = "done";
+        }
+        changed = true;
+      } catch {}
+    }
+    if (changed) await Keys.keepRing(ring);
   },
 
   async run() {
@@ -1268,12 +1347,22 @@ const Sync = {
     if (!canSync()) { this.state.error = INSECURE; paintSync(); return; }
     this.state.busy = true;
     paintSync();
+    let again = false;
     try {
       const k = await Keys.ready();
       if (!k) return;
+      Shares.stamp(k.group, this.base());
       const rows = await this.list();
-      const took = await this.pull(rows);
+      const { took, moved } = await this.pull(rows);
+      if (moved) {
+        // Everything already taken from here stays taken; the next pass is in
+        // the group this one has become part of.
+        await this.move(moved, { note: false });
+        again = true;
+        return;
+      }
       await this.push(rows);
+      await this.tidy();
       this.note(k, rows);
       // A share says it is live, so it is republished on the same beat the rest
       // of the state is: at a session boundary, not on every keystroke.
@@ -1290,6 +1379,7 @@ const Sync = {
     } finally {
       this.state.busy = false;
       paintSync();
+      if (again) setTimeout(() => this.run(), 0);
     }
   },
 
@@ -1335,9 +1425,9 @@ const Sync = {
   /* The device list, kept from what the endpoint reports rather than from
      anything a device claims about itself. */
   note(k, rows) {
-    const held = load(K.devices, {}) || {};
+    const was = load(K.devices, {}) || {}, held = {};
     for (const r of rows) {
-      const row = held[r.slot] || {
+      const row = was[r.slot] || {
         name: r.slot === k.device.fp ? "This device" : `Device ${r.slot.slice(0, 4)}`,
       };
       row.seen = r.recv || nowISO();
@@ -1764,8 +1854,10 @@ const Shares = {
   async create(label, sections) {
     const sk = randomBytes(32);
     const id = idFrom(await hkdf(sk, "hypnotica/profile-id", 16));
+    const k = await Keys.ready();
     const row = { id, key: toB64u(sk), label: String(label || "Shared").slice(0, 80),
-                  sections: [...sections], created: nowISO() };
+                  sections: [...sections], created: nowISO(),
+                  group: k?.group || "", endpoint: Sync.base() };
     const rows = this.all(); rows.push(row); this.write(rows);
     await this.publish(row, true);
     return row;
@@ -1777,8 +1869,8 @@ const Shares = {
      device per sync -- and a window in which a device that has not yet heard
      about a revocation puts the slot back. */
   async publish(row, force = false) {
-    const k = await Keys.ready();
-    if (!k) throw new Error("link a device first — a share needs somewhere to live");
+    const at = await this.at(row);
+    const k = at.k;
     const doc = profileDoc(row.sections);
     const mark = markOf(JSON.stringify({ ...doc, published: "" }));
     if (!force && row.mark === mark) return false;
@@ -1795,7 +1887,7 @@ const Shares = {
                   written: nowISO(), n, ct,
                   sig: await signEnvelope(k.device, row.id, counter, fromB64(ct)) };
     await Sync.ask("PUT", `/profile/${row.id}`, { read: toB64(read), env },
-      { "X-Hypnotica-Group": k.group });
+      { "X-Hypnotica-Group": k.group }, at);
     Sync.bump(row.id, counter);
     row.published = nowISO();
     row.mark = mark;
@@ -1807,9 +1899,10 @@ const Shares = {
      told the link is dead and goes on believing it. The row is kept where the
      endpoint would not take it back, so it can be tried again. */
   async revoke(id) {
-    const k = await Keys.ready();
-    if (k) {
-      await Sync.ask("DELETE", `/profile/${id}`, undefined, { "X-Hypnotica-Group": k.group });
+    if (await Keys.ready()) {
+      const at = await this.at(this.get(id) || { id });
+      await Sync.ask("DELETE", `/profile/${id}`, undefined,
+        { "X-Hypnotica-Group": at.k.group }, at);
     }
     this.write(this.all().filter(r => r.id !== id));
     // Remembered as revoked. Without this the next device to sync still holds
@@ -1844,8 +1937,9 @@ const Shares = {
       if (!gone[id] || favTime(gone[id]) < favTime(when)) gone[id] = when;
     }
     for (const id of fresh) {
-      Keys.ready().then(k => k && Sync.ask("DELETE", `/profile/${id}`, undefined,
-        { "X-Hypnotica-Group": k.group })).catch(() => {});
+      const row = byId.get(id) || (rows || []).find(r => r?.id === id) || { id };
+      Keys.ready().then(k => k && this.at(row)).then(at => at && Sync.ask("DELETE",
+        `/profile/${id}`, undefined, { "X-Hypnotica-Group": at.k.group }, at)).catch(() => {});
     }
     let n = 0;
     for (const row of rows || []) {
@@ -1879,9 +1973,39 @@ const Shares = {
     }
   },
 
+  /* Where a share lives and who may change it. The endpoint keeps the group
+     that first published it and takes changes from that group alone; after two
+     groups have become one, a share made in the other is spoken for with the
+     key the ring kept for it, at the address it was published to. */
+  async at(row) {
+    const k = await Keys.ready();
+    if (!k) throw new Error("link a device first — a share needs somewhere to live");
+    if (!row.group || row.group === k.group) return { k, base: row.endpoint || Sync.base() };
+    const old = await Keys.fromRing(row.group);
+    if (!old) throw new Error("this share was published by a group this device holds no key for");
+    return { k: old.k, base: row.endpoint || old.base };
+  },
+
+  /* A share from before shares said who made them was made by the group it is
+     in now: there was only ever one. Said once, while that is still true -- the
+     moment before a move, and on every pass besides. */
+  stamp(group, base) {
+    const rows = this.all();
+    let changed = false;
+    for (const r of rows) {
+      if (r.group) continue;
+      r.group = group;
+      r.endpoint ||= base;
+      changed = true;
+    }
+    if (changed) save(K.shares, rows);
+  },
+
+  // The address it was published to, which after a merge is not always the
+  // address this library now syncs through.
   link(row) {
     const here = location.origin + location.pathname;
-    return `${here}#/p?e=${encodeURIComponent(Sync.base())}&k=${row.key}`;
+    return `${here}#/p?e=${encodeURIComponent(row.endpoint || Sync.base())}&k=${row.key}`;
   },
 };
 
@@ -2083,6 +2207,25 @@ async function sasDigits(id, a, b) {
   return String(n).padStart(6, "0");
 }
 
+/* Pairing is a conversation through the endpoint that both devices confirm.
+
+   Each side shows six digits derived from both public keys, and each side's
+   person says they match before that side hands anything over. Both hand over
+   the group they are in, if they are in one, sealed to the other's key -- so
+   linking a device that is already linked elsewhere does not strand the devices
+   it was linked to. Two groups become one: the one whose id sorts first, which
+   both ends work out alike without being told, and which does not care who
+   offered. The device leaving writes a note in the group it left, and every
+   device still there follows it (Sync.forwarding).
+
+   The record, as it fills:
+     a: { pub }                       offered
+     b: { pub }                       answered; both screens now show digits
+     b: { pub, ok, n?, ct? }          the joining side's person confirmed
+     a: { pub, n, ct, got? }          the offering side's person confirmed;
+                                      `got` once it has read b's answer
+   The joining side takes the key only once `got` is there, and then removes the
+   record, so neither side can be left without what the other handed over. */
 const Pair = {
   /* Device A. The first press is also the setup: it makes the group key, tells
      the endpoint the group exists, puts this device's state up, and only then
@@ -2092,25 +2235,26 @@ const Pair = {
     const key = randomBytes(32);
     const id = idFrom(await sha256(key));
     const me = await ecdh();
+    const base = Sync.base();
     await Sync.ask("POST", `/sync/${k.group}/pair`, { id, key: toB64(key) });
-    await this.post(id, key, { a: { pub: toB64(me.pub) } });
-    return { id, key, me, link: this.link(id, key) };
+    await this.post(base, id, key, { a: { pub: toB64(me.pub) } });
+    return { id, key, me, base, link: this.link(base, id, key) };
   },
 
-  link(id, key) {
+  link(base, id, key) {
     const here = location.origin + location.pathname;
-    return `${here}#/link?e=${encodeURIComponent(Sync.base())}&p=${id}&k=${toB64u(key)}`;
+    return `${here}#/link?e=${encodeURIComponent(base)}&p=${id}&k=${toB64u(key)}`;
   },
 
   /* The pairing key authenticates both halves of the conversation. It is not
      what keeps the group key secret -- that is the sealing -- it is what stops
      anybody who learns an id from filling the record with noise. */
-  async post(id, key, payload, method = "POST") {
+  async post(base, id, key, payload, method = "POST") {
     const raw = payload === undefined ? new Uint8Array(0) : TE.encode(JSON.stringify(payload));
     const path = `/pair/${id}`;
     const headers = { "X-Hypnotica-Pair": await macOver(key, method, path, raw) };
     if (payload !== undefined) headers["Content-Type"] = "application/json";
-    const r = await fetch(Sync.base() + path, {
+    const r = await fetch(base + path, {
       method, headers, cache: "no-store",
       body: payload === undefined ? undefined : raw,
     });
@@ -2122,40 +2266,110 @@ const Pair = {
     return r.status === 204 ? null : r.json();
   },
 
-  async read(id, key) { return this.post(id, key, undefined, "GET"); },
+  async read(base, id, key) { return this.post(base, id, key, undefined, "GET"); },
 
-  /* Device A, once the joining device has answered: seal the group key to the
-     public key it offered, and post it. */
-  async hand(id, key, me, theirPub) {
+  /* What this side hands over: its group, sealed to the other's key, and where
+     that group lives. Nothing at all from a device in no group. */
+  async sealGroup(myPriv, theirPub) {
     const k = await Keys.ready();
-    const shared = await ecdhSecret(me.priv, theirPub);
-    const { n, ct } = await seal(shared, toB64(k.gk));
-    await this.post(id, key, { a: { pub: toB64(me.pub), n, ct } }, "PUT");
+    if (!k) return {};
+    const shared = await ecdhSecret(myPriv, theirPub);
+    return seal(shared, JSON.stringify({ gk: toB64(k.gk), e: Sync.base() }));
   },
 
-  /* Device B. Announces itself, waits to be confirmed, and takes the key. */
-  async join(endpoint, id, key, onDigits) {
+  async openGroup(myPriv, theirPub, half, base) {
+    const shared = await ecdhSecret(myPriv, theirPub);
+    const text = await unseal(shared, half.n, half.ct);
+    let got;
+    // A key on its own is what an older copy of this page hands over.
+    try { got = JSON.parse(text); } catch { got = { gk: text, e: base }; }
+    const gk = fromB64(String(got?.gk || ""));
+    const e = String(got?.e || base).replace(/\/+$/, "");
+    if (gk.length !== 32 || !/^https?:\/\//.test(e)) throw new Error("what the other device sent is not a key");
+    return { gk, e };
+  },
+
+  /* Device A, once its person has said the digits match: seal the group key to
+     the public key the other device offered, and post it. */
+  async hand(offer, got = false) {
+    const half = await this.sealGroup(offer.me.priv, offer.theirs);
+    await this.post(offer.base, offer.id, offer.key,
+      { a: { pub: toB64(offer.me.pub), ...half, ...(got ? { got: true } : {}) } }, "PUT");
+  },
+
+  /* Device A, after handing over: waits for the other side's person to confirm
+     too, then says it has read the answer. What comes back is the other group,
+     or null from a device that was in none. */
+  async answer(offer, live) {
+    for (let n = 0; n < 150 && live(); n++) {
+      const seen = await this.read(offer.base, offer.id, offer.key).catch(() => null);
+      const b = seen?.b;
+      if (b?.ok) {
+        if (b.pub !== toB64(offer.theirs)) throw new Error("the other device changed its key partway through");
+        const other = b.ct ? await this.openGroup(offer.me.priv, offer.theirs, b, offer.base) : null;
+        await this.hand(offer, true);
+        return other;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    throw new Error("the other device did not confirm in time");
+  },
+
+  /* Device B. Announces itself and works out the digits; hands nothing over. */
+  async announce(link) {
     if (!canSync()) throw new Error(INSECURE);
-    save(K.sync, { endpoint: String(endpoint || "").replace(/\/+$/, "") });
     const me = await ecdh();
-    const first = await this.read(id, key);
+    const first = await this.read(link.endpoint, link.id, link.key);
     const theirPub = first?.a?.pub ? fromB64(first.a.pub) : null;
     if (!theirPub) throw new Error("that code is not offering anything");
-    await this.post(id, key, { b: { pub: toB64(me.pub) } });
-    onDigits(await sasDigits(id, theirPub, me.pub));
+    await this.post(link.endpoint, link.id, link.key, { b: { pub: toB64(me.pub) } });
+    link.me = me;
+    link.theirs = theirPub;
+    return sasDigits(link.id, theirPub, me.pub);
+  },
+
+  /* Device B, once its person has said the digits match. */
+  async accept(link) {
+    const half = await this.sealGroup(link.me.priv, link.theirs);
+    await this.post(link.endpoint, link.id, link.key,
+      { b: { pub: toB64(link.me.pub), ok: true, ...half } }, "PUT");
     for (let n = 0; n < 150; n++) {
-      const seen = await this.read(id, key).catch(() => null);
-      if (seen?.a?.ct) {
-        const shared = await ecdhSecret(me.priv, fromB64(seen.a.pub));
-        const gk = fromB64(await unseal(shared, seen.a.n, seen.a.ct));
-        await Keys.create(gk);
-        await this.post(id, key, undefined, "DELETE").catch(() => {});
+      const seen = await this.read(link.endpoint, link.id, link.key).catch(() => null);
+      const a = seen?.a;
+      if (a?.ct && a.got) {
+        if (a.pub !== toB64(link.theirs)) throw new Error("the other device changed its key partway through");
+        const other = await this.openGroup(link.me.priv, link.theirs, a, link.endpoint);
+        await this.post(link.endpoint, link.id, link.key, undefined, "DELETE").catch(() => {});
+        const how = await this.settle(other);
         await Sync.run();
-        return true;
+        return how;
       }
       await new Promise(r => setTimeout(r, 2000));
     }
     throw new Error("nobody confirmed it in time");
+  },
+
+  /* Both ends, once each holds what the other handed over. The same rule on
+     both sides, so they agree without a further word: the group whose id sorts
+     first is the one both are in afterwards. */
+  async settle(other) {
+    if (!other) return "linked";                      // they were in no group; they are in ours
+    const mine = await Keys.ready();
+    if (!mine) {
+      save(K.sync, { endpoint: other.e });
+      await Keys.create(other.gk);
+      return "joined";
+    }
+    const group = await groupOf(other.gk);
+    if (group === mine.group) return "same";
+    if (group < mine.group) {
+      await Sync.move({ gk: other.gk, e: other.e }, { note: true });
+      return "merged";
+    }
+    // This group stays. Keeping the other's key means its shares can be spoken
+    // for from here straight away rather than once its devices have arrived.
+    await Keys.retire(other.gk, other.e, "done");
+    return "merged";
   },
 };
 
@@ -2192,15 +2406,18 @@ const Keys = {
   /* Derived once and kept in memory: the group id names the folder, the content
      key opens the blobs, and the enrolment key is the only one the server sees. */
   async adopt(gk) {
-    const group = idFrom(await hkdf(gk, "hypnotica/group-id", 16));
-    this.held = {
+    this.held = await this.derive(gk);
+    return this.held;
+  },
+
+  async derive(gk) {
+    return {
       gk,
-      group,
+      group: await groupOf(gk),
       content: await hkdf(gk, "hypnotica/content"),
       enrol: await hkdf(gk, "hypnotica/enrol"),
       device: await this.device(),
     };
-    return this.held;
   },
 
   async ready() {
@@ -2250,8 +2467,69 @@ const Keys = {
   async forget() {
     this.held = null;
     await keyOp("readwrite", st => st.delete("group")).catch(() => {});
+    await keyOp("readwrite", st => st.delete("ring")).catch(() => {});
+  },
+
+  /* Groups this library used to be, kept after two of them became one.
+
+     The endpoint remembers which group published each share and takes a change
+     to it from no other, so a share made before a merge can be republished,
+     rotated or revoked only by whoever still holds the key it was made under.
+     The ring holds those keys, and travels between devices with everything else
+     -- a share is the library's, and so is being able to take it down.
+
+     `state` is this device's own business with that group: "note" while the
+     forwarding note it owes is unwritten, "noted" once written, "leave" while
+     its own old slot is still to be cleared, and "done". */
+  async ring() {
+    const row = await keyOp("readonly", st => st.get("ring")).catch(() => null);
+    return Array.isArray(row?.rows) ? row.rows.map(r => ({ ...r, gk: new Uint8Array(r.gk) })) : [];
+  },
+
+  async keepRing(rows) {
+    await keyOp("readwrite", st => st.put({ id: "ring", rows: rows.slice(-RING_MAX) }));
+  },
+
+  async retire(gk, e, state) {
+    const group = await groupOf(gk);
+    const rows = (await this.ring()).filter(r => r.group !== group);
+    rows.push({ gk, group, e: String(e || "").replace(/\/+$/, ""), state });
+    await this.keepRing(rows);
+  },
+
+  /* Keys another device had retired. Taken for their shares; nothing is owed
+     to a group this device was never in, so they arrive done. */
+  async takeRing(rows) {
+    if (!Array.isArray(rows) || !rows.length) return;
+    const held = await this.ring(), have = new Set(held.map(r => r.group));
+    const current = this.held?.group;
+    let added = false;
+    for (const r of rows) {
+      let gk;
+      try { gk = fromB64(String(r?.gk || "")); } catch { continue; }
+      if (gk.length !== 32 || !/^https?:\/\//.test(String(r.e || ""))) continue;
+      const group = await groupOf(gk);
+      if (have.has(group) || group === current) continue;
+      held.push({ gk, group, e: String(r.e).replace(/\/+$/, ""), state: "done" });
+      have.add(group); added = true;
+    }
+    if (added) await this.keepRing(held);
+  },
+
+  async ringOut(except) {
+    return (await this.ring()).filter(r => r.group !== except)
+      .map(r => ({ gk: toB64(r.gk), e: r.e }));
+  },
+
+  /* Somewhere to speak as a retired group: its keys, and where it lives. */
+  async fromRing(group) {
+    const row = (await this.ring()).find(r => r.group === group);
+    return row ? { k: await this.derive(row.gk), base: row.e } : null;
   },
 };
+
+const RING_MAX = 32;
+const groupOf = async gk => idFrom(await hkdf(gk, "hypnotica/group-id", 16));
 
 /* ------------------------------------------------------------------ player */
 const Player = {
@@ -5194,18 +5472,50 @@ function viewLink() {
   }
   if (LINKING.done) {
     return `<h1 style="margin-top:18px">Linked</h1>
-      <p class="kv">This device is now part of the group, and has taken what the others hold.</p>
+      <p class="kv">${LINKING.done === "joined"
+        ? "This device is now part of the group, and has taken what the others hold."
+        : esc(linkedSays(LINKING.done))}</p>
       <div class="actions"><a class="btn primary" href="#/">Back to the library</a></div>`;
   }
+  /* Said before anything is pressed, because a device already in a group takes
+     every device it is linked to along with it -- and anybody it has shared with
+     starts seeing the other side's library too. */
+  // Asked of the endpoint rather than taken from the last sync, which may have
+  // been before the newest of them arrived.
+  if (Sync.on() && LINKING.others === undefined) {
+    const link = LINKING;
+    link.others = null;
+    Sync.list().then(rows => { link.others = rows.length - 1; if (LINKING === link) render(); })
+      .catch(() => {});
+  }
+  const others = LINKING.others;
+  const already = Sync.on()
+    ? `<p class="note">This device is already linked${others > 0
+        ? ` to ${others} other${others === 1 ? "" : "s"}` : ""}.
+        Linking it here brings the two groups together: every device in either ends up
+        in one, holding everything both had.${Shares.all().length ? ` Links you have
+        shared go on working, and show the whole combined library from then on.` : ""}
+        Only do this with your own devices — somebody else's is what a share link is for.</p>`
+    : "";
   return `<h1 style="margin-top:18px">Link this device</h1>
     <p class="kv">Another device is offering to link this one.</p>
-    ${LINKING.digits
-      ? `<p class="note">Check that the other device is showing the same six digits, then
-          confirm it there. This one is waiting.</p>
+    ${already}
+    ${LINKING.accepted
+      ? `<p class="note">Confirmed here. If the other device has not been confirmed yet,
+          do that now.</p>
          <p class="sas">${esc(LINKING.digits)}</p>
          <p class="note" id="linkState">Waiting for the other device…</p>`
-      : `<p class="note">This will take a copy of the group's key, so that both devices
-          hold the same library. Both screens will show six digits to compare first.</p>
+      : LINKING.digits
+      ? `<p class="note">Check that the other device is showing the same six digits. If
+          it is, confirm here and there.</p>
+         <p class="sas">${esc(LINKING.digits)}</p>
+         <div class="actions">
+           <button class="btn primary" data-act="linkAccept"${/\d{6}/.test(LINKING.digits)
+             ? "" : " disabled"}>They match — link it</button>
+           <a class="btn" href="#/">Cancel</a>
+         </div>`
+      : `<p class="note">This will link the two devices, so that both hold the same
+          library. Both screens will show six digits to compare first.</p>
          <div class="actions">
            <button class="btn primary" data-act="linkJoin">Join</button>
            <a class="btn" href="#/">Not now</a>
@@ -5895,7 +6205,7 @@ async function offerNow(endpoint, invite) {
   OFFER = offer;
   showOffer();
   OFFER.poll = setInterval(async () => {
-    const seen = await Pair.read(offer.id, offer.key).catch(() => null);
+    const seen = await Pair.read(offer.base, offer.id, offer.key).catch(() => null);
     if (!seen?.b?.pub || OFFER?.digits) return;
     OFFER.theirs = fromB64(seen.b.pub);
     OFFER.digits = await sasDigits(offer.id, offer.me.pub, OFFER.theirs);
@@ -5912,7 +6222,8 @@ function showOffer() {
         it here.</p>
        <p class="sas">${esc(OFFER.digits)}</p>
        <p class="note">If they differ, something is between the two devices. Cancel, and
-        start again.</p>`
+        start again. If that device is already linked to others of yours, the two groups
+        become one.</p>`
     : `<p class="note">Open this on the other device — its camera will do. The code is
         good for five minutes and one device, and it does not carry the key: that is
         handed over afterwards, sealed, once you have compared six digits.</p>
@@ -5931,18 +6242,38 @@ function showOffer() {
 }
 
 async function confirmOffer() {
-  if (!OFFER?.theirs) return;
+  const offer = OFFER;
+  if (!offer?.theirs || offer.handed) return;
+  offer.handed = true;
   try {
-    await Pair.hand(OFFER.id, OFFER.key, OFFER.me, OFFER.theirs);
+    await Pair.hand(offer);
     transferDialog("Link a device",
-      `<p class="note">Linked. The other device is taking a copy now.</p>`,
-      `<button class="btn primary" data-act="linkCancel">Done</button>`);
+      `<p class="note">Confirmed here. Now confirm on the other device — it is showing
+        the same six digits.</p>
+       <p class="sas">${esc(offer.digits)}</p>
+       <p class="note" id="linkState">Waiting for the other device…</p>`,
+      `<button class="btn" data-act="linkCancel">Cancel</button>`);
+    const other = await Pair.answer(offer, () => OFFER === offer);
+    const how = await Pair.settle(other);
     stopOffer();
+    transferDialog("Link a device", `<p class="note">${esc(linkedSays(how))}</p>`,
+      `<button class="btn primary" data-act="linkCancel">Done</button>`);
     Sync.run();
     render();
   } catch (e) {
-    toast(e.message || "could not hand the key over");
+    offer.handed = false;
+    if (OFFER === offer) toast(e.message || "could not hand the key over");
   }
+}
+
+/* What linking did, said the same way on both screens. */
+function linkedSays(how) {
+  return how === "merged"
+    ? `Linked. Both devices were already in groups of their own, and the two are now
+       one: every device in either is joining it and bringing what it holds, and links
+       shared from either go on working and show the whole of it.`
+    : how === "same" ? "These two were already linked to each other."
+    : "Linked. The other device is taking a copy now.";
 }
 
 /* Importing somebody else's share takes what they chose to publish and leaves
@@ -6112,11 +6443,20 @@ document.addEventListener("click", e => {
     case "linkJoin": {
       if (!LINKING) return;
       LINKING.error = "";
-      Pair.join(LINKING.endpoint, LINKING.id, LINKING.key, digits => {
-        LINKING.digits = digits; render();
-      }).then(() => { LINKING.done = true; render(); })
-        .catch(e => { LINKING.error = e.message || String(e); render(); });
-      LINKING.digits = LINKING.digits || "……";
+      const link = LINKING;
+      Pair.announce(link)
+        .then(digits => { link.digits = digits; render(); })
+        .catch(e => { link.digits = ""; link.error = e.message || String(e); render(); });
+      link.digits = link.digits || "……";
+      render(); return; }
+    case "linkAccept": {
+      const link = LINKING;
+      if (!link?.me || link.accepted) return;
+      link.error = "";
+      link.accepted = true;
+      Pair.accept(link)
+        .then(how => { link.done = how; render(); })
+        .catch(e => { link.accepted = false; link.error = e.message || String(e); render(); });
       render(); return; }
     case "syncNow": Sync.run(); return;
     case "unlinkAll":

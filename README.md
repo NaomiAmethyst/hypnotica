@@ -84,8 +84,13 @@ Then, on the first device, open the menu in the top right, choose **Link a
 device**, and give it the address — which is filled in already when the site is
 served by the same Hypnotica. That press is what creates the group key. It shows
 a code; open it on the second device with its camera, compare the six digits on
-the two screens, and confirm. The code is good for five minutes and one device,
-and it does not carry the key — that is handed over sealed, afterwards.
+the two screens, and confirm on both. The code is good for five minutes and one
+device, and it does not carry the key — that is handed over sealed, afterwards.
+
+It does not matter which device offers. If both are already linked to others —
+a phone and a laptop that were each set up on their own — the two groups become
+one, and the devices that took no part follow the next time they sync. Links you
+have shared from either side go on working and show the combined library.
 
 Publishing a share does the same setup if it has not happened yet, so a library
 with one device can share a view of itself without linking a second one.
